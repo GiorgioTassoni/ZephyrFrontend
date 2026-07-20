@@ -1,0 +1,373 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../models/models.dart';
+import '../providers/player_provider.dart';
+import '../theme/colors.dart';
+import '../widgets/cover_image.dart';
+
+class QueueScreen extends ConsumerWidget {
+  const QueueScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final playerState = ref.watch(playerProvider);
+    final playerNotifier = ref.read(playerProvider.notifier);
+
+    final currentTrack = playerState.currentTrack;
+    final userQueue = playerState.userQueue;
+
+    // Remaining tracks in the base queue after the current playing track
+    final baseQueueRemaining = playerState.queue.isEmpty || playerState.currentIndex < 0
+        ? <Track>[]
+        : playerState.queue.sublist((playerState.currentIndex + 1).clamp(0, playerState.queue.length));
+
+    return Scaffold(
+      backgroundColor: ZephyrColors.bgDark,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          const Padding(
+            padding: EdgeInsets.only(left: 24, top: 24, right: 24, bottom: 8),
+            child: Text(
+              'Play Queue',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: ZephyrColors.text,
+              ),
+            ),
+          ),
+          const Divider(color: ZephyrColors.bgLight, height: 1),
+
+          // Scrollable Queue Content
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              children: [
+                // 1. Now Playing Section
+                if (currentTrack != null) ...[
+                  const Text(
+                    'Now playing',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: ZephyrColors.textDim,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildNowPlayingTile(context, currentTrack),
+                  const SizedBox(height: 32),
+                ],
+
+                // 2. Next Up (User Queue) Section
+                if (userQueue.isNotEmpty) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Next up',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: ZephyrColors.textDim,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: playerNotifier.clearUserQueue,
+                        child: const Text(
+                          'Clear all',
+                          style: TextStyle(
+                            color: ZephyrColors.primary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildReorderableList(
+                    context,
+                    tracks: userQueue,
+                    isUserQueue: true,
+                    onReorder: playerNotifier.reorderUserQueue,
+                    onDelete: playerNotifier.removeFromUserQueue,
+                  ),
+                  const SizedBox(height: 32),
+                ],
+
+                // 3. Next In Queue (Base Queue) Section
+                if (baseQueueRemaining.isNotEmpty) ...[
+                  const Text(
+                    'Next in queue',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: ZephyrColors.textDim,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildReorderableList(
+                    context,
+                    tracks: baseQueueRemaining,
+                    isUserQueue: false,
+                    onReorder: playerNotifier.reorderBaseQueue,
+                    onDelete: playerNotifier.removeFromBaseQueue,
+                  ),
+                ] else if (userQueue.isEmpty && currentTrack == null) ...[
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 64),
+                      child: Text(
+                        'Queue is empty. Play a song or add songs to queue.',
+                        style: TextStyle(color: ZephyrColors.textDim),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNowPlayingTile(BuildContext context, Track track) {
+    return Container(
+      decoration: BoxDecoration(
+        color: ZephyrColors.bgLight.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: ZephyrColors.bgLight.withValues(alpha: 0.3),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.volume_up,
+            color: ZephyrColors.primary,
+            size: 20,
+          ),
+          const SizedBox(width: 16),
+          CoverImage(
+            videoId: track.videoId,
+            coverUrl: track.coverUrl,
+            size: 44,
+            borderRadius: 4,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  track.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: ZephyrColors.primary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  track.artists.join(', '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: ZephyrColors.textDim,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (track.duration != null) ...[
+            Text(
+              _formatDuration(track.duration!),
+              style: const TextStyle(
+                fontSize: 13,
+                color: ZephyrColors.textDim,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReorderableList(
+    BuildContext context, {
+    required List<Track> tracks,
+    required bool isUserQueue,
+    required void Function(int, int) onReorder,
+    required void Function(int) onDelete,
+  }) {
+    return Theme(
+      data: Theme.of(context).copyWith(
+        canvasColor: Colors.transparent, // Disable default shadow background during drag
+      ),
+      child: ReorderableListView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: tracks.length,
+        onReorder: onReorder,
+        buildDefaultDragHandles: false, // Custom drag handle for premium control
+        itemBuilder: (context, index) {
+          final track = tracks[index];
+          final keyString = '${track.videoId}_${isUserQueue ? "user" : "base"}_$index';
+
+          return ReorderableDragStartListener(
+            key: ValueKey(keyString),
+            index: index,
+            child: _QueueTrackTile(
+              track: track,
+              index: index,
+              onDelete: () => onDelete(index),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    final mins = duration.inMinutes;
+    final secs = duration.inSeconds % 60;
+    return '$mins:${secs.toString().padLeft(2, '0')}';
+  }
+}
+
+class _QueueTrackTile extends StatefulWidget {
+  final Track track;
+  final int index;
+  final VoidCallback onDelete;
+
+  const _QueueTrackTile({
+    required this.track,
+    required this.index,
+    required this.onDelete,
+  });
+
+  @override
+  State<_QueueTrackTile> createState() => _QueueTrackTileState();
+}
+
+class _QueueTrackTileState extends State<_QueueTrackTile> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: Container(
+        decoration: BoxDecoration(
+          color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        margin: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          children: [
+            // Drag handle or Index number
+            SizedBox(
+              width: 32,
+              child: Center(
+                child: _isHovered
+                    ? const Icon(
+                        Icons.drag_handle,
+                        color: ZephyrColors.textDim,
+                        size: 20,
+                      )
+                    : Text(
+                        '${widget.index + 1}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: ZephyrColors.textMuted,
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            CoverImage(
+              videoId: widget.track.videoId,
+              coverUrl: widget.track.coverUrl,
+              size: 40,
+              borderRadius: 4,
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.track.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                      color: ZephyrColors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.track.artists.join(', '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: ZephyrColors.textDim,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Actions (Delete button on hover)
+            SizedBox(
+              width: 80,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (widget.track.duration != null)
+                    Text(
+                      _formatDuration(widget.track.duration!),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: ZephyrColors.textDim,
+                      ),
+                    ),
+                  const SizedBox(width: 12),
+                  if (_isHovered)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: ZephyrColors.error,
+                        size: 18,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      tooltip: 'Remove from Queue',
+                      onPressed: widget.onDelete,
+                    )
+                  else
+                    const SizedBox(width: 18),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    final mins = duration.inMinutes;
+    final secs = duration.inSeconds % 60;
+    return '$mins:${secs.toString().padLeft(2, '0')}';
+  }
+}

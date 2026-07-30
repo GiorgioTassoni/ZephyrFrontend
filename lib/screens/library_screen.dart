@@ -6,6 +6,7 @@ import '../providers/navigation_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/playlist_card.dart';
 import '../widgets/track_tile.dart';
+import 'favorites_screen.dart';
 
 enum LibraryView {
   grid,
@@ -88,12 +89,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final authState = ref.watch(authProvider);
     switch (_currentView) {
       case LibraryView.favorites:
-        return _buildFavoritesDetailView(libraryState);
+        return const FavoritesScreen();
       case LibraryView.vpsSongs:
         if (!authState.isAdmin) {
           return _buildLibraryGridView(libraryState, navNotifier);
         }
-        return _buildVpsSongsDetailView(libraryState);
+        return _buildVpsSongsDetailView(libraryState, navNotifier);
       case LibraryView.grid:
       default:
         return _buildLibraryGridView(libraryState, navNotifier);
@@ -135,12 +136,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 // Favorite Card
                 return _CustomLibraryCard(
                   title: 'Favorite',
-                  subtitle: '${libraryState.favorites.length} songs',
                   icon: const Icon(Icons.favorite, size: 54, color: ZephyrColors.primary),
                   backgroundColor: ZephyrColors.primary.withValues(alpha: 0.15),
                   onTap: () {
-                    setState(() => _currentView = LibraryView.favorites);
-                    // Fresh fetch every time user opens the favorites view
+                    navNotifier.navigateTo(const ScreenState(type: ScreenType.favorites));
                     ref.read(libraryProvider.notifier).loadFavorites();
                   },
                 );
@@ -151,10 +150,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   // VPS Songs Card
                   return _CustomLibraryCard(
                     title: 'VPS Songs',
-                    subtitle: '${libraryState.downloadedTracks.length} tracks',
                     icon: const Icon(Icons.library_music, size: 54, color: Colors.blue),
                     backgroundColor: Colors.blue.withValues(alpha: 0.15),
-                    onTap: () => setState(() => _currentView = LibraryView.vpsSongs),
+                    onTap: () => navNotifier.navigateTo(const ScreenState(type: ScreenType.library, intId: 2)),
                   );
                 } else {
                   // Playlist Cards
@@ -183,7 +181,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  Widget _buildFavoritesDetailView(LibraryState libraryState) {
+  Widget _buildFavoritesDetailView(LibraryState libraryState, NavigationNotifier navNotifier) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -194,7 +192,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back, color: ZephyrColors.text),
-                onPressed: () => setState(() => _currentView = LibraryView.grid),
+                onPressed: () {
+                  if (navNotifier.canGoBack) {
+                    navNotifier.navigateBack();
+                  } else {
+                    navNotifier.navigateTo(const ScreenState(type: ScreenType.library, intId: 1));
+                  }
+                },
               ),
               const SizedBox(width: 8),
               const Icon(Icons.favorite, color: ZephyrColors.primary, size: 24),
@@ -305,7 +309,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  Widget _buildVpsSongsDetailView(LibraryState libraryState) {
+  Widget _buildVpsSongsDetailView(LibraryState libraryState, NavigationNotifier navNotifier) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -316,7 +320,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back, color: ZephyrColors.text),
-                onPressed: () => setState(() => _currentView = LibraryView.grid),
+                onPressed: () {
+                  if (navNotifier.canGoBack) {
+                    navNotifier.navigateBack();
+                  } else {
+                    navNotifier.navigateTo(const ScreenState(type: ScreenType.library, intId: 1));
+                  }
+                },
               ),
               const SizedBox(width: 8),
               const Icon(Icons.library_music, color: Colors.blue, size: 24),
@@ -361,14 +371,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
 class _CustomLibraryCard extends StatefulWidget {
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final Widget icon;
   final Color backgroundColor;
   final VoidCallback onTap;
 
   const _CustomLibraryCard({
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     required this.icon,
     required this.backgroundColor,
     required this.onTap,
@@ -441,16 +451,18 @@ class _CustomLibraryCardState extends State<_CustomLibraryCard> {
                     color: ZephyrColors.text,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: ZephyrColors.textDim,
+                if (widget.subtitle != null && widget.subtitle!.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    widget.subtitle!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: ZephyrColors.textDim,
+                    ),
                   ),
-                ),
+                ],
                 const SizedBox(height: 4),
                 const Text(
                   'Collection',

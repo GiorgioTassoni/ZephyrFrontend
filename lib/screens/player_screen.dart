@@ -7,8 +7,12 @@ import '../models/models.dart';
 import '../providers/library_provider.dart';
 import '../providers/player_provider.dart';
 import '../theme/colors.dart';
+import '../providers/navigation_provider.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/seek_bar.dart';
+import '../widgets/artist_links.dart';
+import '../widgets/toast.dart';
+import '../widgets/share_dialog.dart';
 
 // Model for LRC line parsing
 class LrcLine {
@@ -41,27 +45,39 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
   String? _lastVideoId;
   int _activeLrcIndex = -1;
   bool _isSynced = true;
+  bool _hasRetriedLyricsOnPlay = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    if (_tabController.index == 1 && _relatedData == null && !_isLoadingRelated && _lastVideoId != null) {
+      _fetchRelatedTracks(_lastVideoId!);
+    }
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     _lyricsScrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _fetchMetadataAndRelated(String videoId) async {
-    if (_lastVideoId == videoId) return;
+  Future<void> _fetchMetadataAndRelated(String videoId, {bool force = false}) async {
+    if (_lastVideoId == videoId && !force) return;
+    if (_lastVideoId != videoId) {
+      _hasRetriedLyricsOnPlay = false;
+    }
     _lastVideoId = videoId;
 
     setState(() {
       _isLoadingMetadata = true;
-      _isLoadingRelated = true;
+      _isLoadingRelated = false;
       _lrcLines = [];
       _lyricKeys.clear();
       _relatedData = null;
@@ -93,7 +109,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
       }
     }
 
-    // 2. Fetch Related Songs
+    // Only fetch related tracks if user is currently viewing the Related tab
+    if (_tabController.index == 1) {
+      _fetchRelatedTracks(videoId);
+    }
+  }
+
+  Future<void> _fetchRelatedTracks(String videoId) async {
+    if (_isLoadingRelated) return;
+    setState(() {
+      _isLoadingRelated = true;
+    });
     try {
       final related = await _api.getRelatedTracks(videoId);
       if (mounted) {
@@ -198,6 +224,106 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     }
   }
 
+  Future<void> _handlePlayerMenuSelection(
+    BuildContext context,
+    WidgetRef ref,
+    Track track,
+    String value,
+  ) async {
+    final navNotifier = ref.read(navigationProvider.notifier);
+    final isModal = Navigator.of(context).canPop() && !widget.isInline;
+
+    if (value == 'go_to_album') {
+      if (isModal) Navigator.of(context).pop();
+
+      // 1. Direct albumId
+      if (track.albumId != null && track.albumId!.isNotEmpty) {
+        navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: track.albumId!));
+        return;
+      }
+
+      // 2. Search YTMusic remotely for album (remote: true)
+      if (track.album != null && track.album!.isNotEmpty) {
+        try {
+          final query = '${track.album} ${track.artists.isNotEmpty ? track.artists.first : ''}'.trim();
+          final searchRes = await _api.search(query, remote: true);
+          final results = searchRes['results'];
+          List<dynamic> albums = [];
+          if (results is Map && results.containsKey('albums')) {
+            albums = (results['albums'] as List?) ?? [];
+          } else if (searchRes['albums'] is List) {
+            albums = searchRes['albums'] as List;
+          }
+
+          if (albums.isNotEmpty) {
+            final firstAlbum = albums.first;
+            final id = (firstAlbum['id'] ?? firstAlbum['browse_id'] ?? firstAlbum['browseId'])?.toString();
+            if (id != null && id.isNotEmpty) {
+              navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: id));
+              return;
+            }
+          }
+        } catch (_) {}
+
+        ZephyrToast.show(context, 'Could not find album page for "${track.album}"');
+      } else {
+        ZephyrToast.show(context, 'No album information available for this track');
+      }
+    } else if (value.startsWith('go_to_artist_')) {
+      final indexStr = value.substring('go_to_artist_'.length);
+      final index = int.tryParse(indexStr) ?? 0;
+      if (index < track.artists.length) {
+        if (isModal) Navigator.of(context).pop();
+        final name = track.artists[index];
+        final channelId = (index < track.artistsIds.length && track.artistsIds[index].isNotEmpty)
+            ? track.artistsIds[index]
+            : null;
+
+        if (channelId != null && channelId.isNotEmpty) {
+          navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: channelId));
+          return;
+        }
+
+        try {
+          final res = await _api.getArtistByName(name);
+          final id = (res['id'] ?? res['channel_id'] ?? res['browse_id'])?.toString();
+          if (id != null && id.isNotEmpty) {
+            navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: id));
+            return;
+          }
+        } catch (_) {}
+
+        // Remote search fallback for artist
+        try {
+          final searchRes = await _api.search(name, remote: true);
+          final results = searchRes['results'];
+          List<dynamic> artists = [];
+          if (results is Map && results.containsKey('artists')) {
+            artists = (results['artists'] as List?) ?? [];
+          } else if (searchRes['artists'] is List) {
+            artists = searchRes['artists'] as List;
+          }
+
+          if (artists.isNotEmpty) {
+            final firstArtist = artists.first;
+            final id = (firstArtist['id'] ?? firstArtist['channel_id'] ?? firstArtist['browse_id'] ?? firstArtist['channelId'])?.toString();
+            if (id != null && id.isNotEmpty) {
+              navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: id));
+              return;
+            }
+          }
+        } catch (_) {}
+
+        ZephyrToast.show(context, 'Could not find artist page for "$name"');
+      }
+    } else if (value == 'share') {
+      showShareDialog(context, ref, track);
+    } else if (value == 'download') {
+      _api.queueDownload(track.videoId);
+      ZephyrToast.show(context, 'Download queued for "${track.title}"');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final playerState = ref.watch(playerProvider);
@@ -224,6 +350,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     
     // Auto fetch metadata and related when song changes
     _fetchMetadataAndRelated(track.videoId);
+
+    // One-time retry when music starts playing if lyrics were missing on initial load
+    if (playerState.isPlaying &&
+        playerState.position.inMilliseconds > 0 &&
+        !_hasRetriedLyricsOnPlay &&
+        !_isLoadingMetadata &&
+        _lrcLines.isEmpty &&
+        (_enrichedMetadata?.lyricsText == null || _enrichedMetadata!.lyricsText!.trim().isEmpty)) {
+      _hasRetriedLyricsOnPlay = true;
+      Future.microtask(() {
+        if (mounted) {
+          _fetchMetadataAndRelated(track.videoId, force: true);
+        }
+      });
+    }
     
     // Auto update lyrics highlighted line based on player position
     _updateLyricsScrolling(playerState.position);
@@ -297,14 +438,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                                 ),
                               ),
                               const SizedBox(height: 6),
-                              Text(
-                                track.artists.join(', '),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                              ArtistLinks(
+                                track: track,
                                 style: const TextStyle(
                                   fontSize: 14,
                                   color: ZephyrColors.textDim,
                                 ),
+                                maxLines: 2,
                               ),
                             ],
                           ),
@@ -317,6 +457,59 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                             size: 24,
                           ),
                           onPressed: () => libraryNotifier.toggleFavorite(track),
+                        ),
+                        PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim, size: 24),
+                          color: ZephyrColors.bgCard,
+                          onSelected: (val) => _handlePlayerMenuSelection(context, ref, track, val),
+                          itemBuilder: (context) {
+                            final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
+                            return [
+                              if (track.album != null && track.album!.isNotEmpty)
+                                const PopupMenuItem(
+                                  value: 'go_to_album',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
+                                      SizedBox(width: 10),
+                                      Text('Go to album'),
+                                    ],
+                                  ),
+                                ),
+                              for (int i = 0; i < validArtists.length; i++)
+                                PopupMenuItem(
+                                  value: 'go_to_artist_$i',
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.person, size: 20, color: ZephyrColors.textDim),
+                                      const SizedBox(width: 10),
+                                      Text(validArtists.length == 1 ? 'Go to artist' : 'Go to ${validArtists[i]}'),
+                                    ],
+                                  ),
+                                ),
+                              if (validArtists.isEmpty)
+                                const PopupMenuItem(
+                                  value: 'go_to_artist_0',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.person, size: 20, color: ZephyrColors.textDim),
+                                      SizedBox(width: 10),
+                                      Text('Go to artist'),
+                                    ],
+                                  ),
+                                ),
+                              const PopupMenuItem(
+                                value: 'share',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.share_rounded, size: 20, color: ZephyrColors.textDim),
+                                    SizedBox(width: 10),
+                                    Text('Share song'),
+                                  ],
+                                ),
+                              ),
+                            ];
+                          },
                         ),
                       ],
                     ),
@@ -384,14 +577,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                               ),
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              track.artists.join(', '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            ArtistLinks(
+                              track: track,
                               style: const TextStyle(
                                 fontSize: 16,
                                 color: ZephyrColors.textDim,
                               ),
+                              onNavigate: () {
+                                if (Navigator.of(context).canPop()) {
+                                  Navigator.of(context).pop();
+                                }
+                              },
                             ),
                           ],
                         ),
@@ -403,6 +599,59 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                           size: 28,
                         ),
                         onPressed: () => libraryNotifier.toggleFavorite(track),
+                      ),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim, size: 28),
+                        color: ZephyrColors.bgCard,
+                        onSelected: (val) => _handlePlayerMenuSelection(context, ref, track, val),
+                        itemBuilder: (context) {
+                          final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
+                          return [
+                            if (track.album != null && track.album!.isNotEmpty)
+                              const PopupMenuItem(
+                                value: 'go_to_album',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
+                                    SizedBox(width: 10),
+                                    Text('Go to album'),
+                                  ],
+                                ),
+                              ),
+                            for (int i = 0; i < validArtists.length; i++)
+                              PopupMenuItem(
+                                value: 'go_to_artist_$i',
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.person, size: 20, color: ZephyrColors.textDim),
+                                    const SizedBox(width: 10),
+                                    Text(validArtists.length == 1 ? 'Go to artist' : 'Go to ${validArtists[i]}'),
+                                  ],
+                                ),
+                              ),
+                            if (validArtists.isEmpty)
+                              const PopupMenuItem(
+                                value: 'go_to_artist_0',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.person, size: 20, color: ZephyrColors.textDim),
+                                    SizedBox(width: 10),
+                                    Text('Go to artist'),
+                                  ],
+                                ),
+                              ),
+                            const PopupMenuItem(
+                              value: 'share',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.share_rounded, size: 20, color: ZephyrColors.textDim),
+                                  SizedBox(width: 10),
+                                  Text('Share song'),
+                                ],
+                              ),
+                            ),
+                          ];
+                        },
                       ),
                     ],
                   ),
@@ -485,13 +734,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                       children: [
                         IconButton(
                           icon: Icon(
-                            playerState.volume == 0 ? Icons.volume_off : Icons.volume_down,
-                            color: ZephyrColors.textDim,
+                            playerState.volume == 0
+                                ? Icons.volume_off
+                                : (playerState.volume < 0.5 ? Icons.volume_down : Icons.volume_up),
+                            color: playerState.volume == 0 ? ZephyrColors.error : ZephyrColors.textDim,
                             size: 20,
                           ),
-                          onPressed: () {
-                            playerNotifier.setVolume(playerState.volume == 0 ? 0.5 : 0.0);
-                          },
+                          tooltip: playerState.volume == 0 ? 'Unmute' : 'Mute',
+                          onPressed: () => playerNotifier.toggleMute(),
                         ),
                         Expanded(
                           child: SliderTheme(

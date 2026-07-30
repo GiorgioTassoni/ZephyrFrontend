@@ -8,7 +8,9 @@ import '../theme/colors.dart';
 import '../providers/auth_provider.dart';
 import '../providers/navigation_provider.dart';
 import 'track_metadata_editor_dialog.dart';
+import 'share_dialog.dart';
 import 'cover_image.dart';
+import 'artist_links.dart';
 import 'toast.dart';
 
 class TrackTile extends ConsumerStatefulWidget {
@@ -68,6 +70,7 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                 CoverImage(
                   videoId: widget.track.videoId,
                   coverUrl: widget.track.coverUrl,
+                  isDownloaded: widget.track.isDownloaded,
                   size: 48,
                 ),
                 if (isCurrent)
@@ -95,10 +98,8 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                 color: isCurrent ? ZephyrColors.primary : ZephyrColors.text,
               ),
             ),
-            subtitle: Text(
-              widget.track.artists.join(', '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            subtitle: ArtistLinks(
+              track: widget.track,
               style: const TextStyle(
                 color: ZephyrColors.textDim,
                 fontSize: 12,
@@ -269,7 +270,15 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                               await ref.read(libraryProvider.notifier).addTrackToPlaylist(playlist.id, widget.track);
                               ZephyrToast.show(context, 'Added to "${playlist.name}"');
                             } catch (e) {
-                              ZephyrToast.show(context, 'Failed to add: $e', isError: true);
+                              final errStr = e.toString().toLowerCase();
+                              final isDup = errStr.contains('duplicate') ||
+                                  errStr.contains('already') ||
+                                  errStr.contains('400') ||
+                                  errStr.contains('409');
+                              final msg = isDup
+                                  ? 'Track is already in this playlist'
+                                  : 'Failed to add: $e';
+                              ZephyrToast.show(context, msg, isError: true);
                             }
                           },
                         ),
@@ -325,6 +334,16 @@ class _TrackTileState extends ConsumerState<TrackTile> {
           ],
         ),
       ),
+      PopupMenuItem(
+        value: 'share_song',
+        child: Row(
+          children: [
+            Icon(Icons.share_rounded, size: 20, color: ZephyrColors.textDim),
+            const SizedBox(width: 8),
+            Text('Share Song', style: TextStyle(color: ZephyrColors.text)),
+          ],
+        ),
+      ),
     ];
 
     if (authState.isCurator) {
@@ -373,6 +392,8 @@ class _TrackTileState extends ConsumerState<TrackTile> {
         );
       } else if (value == 'add_to_playlist') {
         _showAddToPlaylistDialog(context, ref);
+      } else if (value == 'share_song') {
+        showShareDialog(context, ref, widget.track);
       } else if (value == 'edit_metadata') {
         showDialog<bool>(
           context: context,

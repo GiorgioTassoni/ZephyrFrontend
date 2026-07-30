@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../providers/player_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
+import '../widgets/artist_links.dart';
 
 class QueueScreen extends ConsumerWidget {
   const QueueScreen({super.key});
@@ -173,10 +174,8 @@ class QueueScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  track.artists.join(', '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                ArtistLinks(
+                  track: track,
                   style: const TextStyle(
                     fontSize: 12,
                     color: ZephyrColors.textDim,
@@ -315,10 +314,8 @@ class _QueueTrackTileState extends State<_QueueTrackTile> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    widget.track.artists.join(', '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  ArtistLinks(
+                    track: widget.track,
                     style: const TextStyle(
                       fontSize: 12,
                       color: ZephyrColors.textDim,

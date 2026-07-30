@@ -75,11 +75,11 @@ Rotate the refresh token and mint a new access + refresh pair. **Use the refresh
 
 | Condition | Server behavior |
 |---|---|
-| Presented hash matches current `refresh_token_hash` | Rotate, demote old current into a 60-second grace window |
-| Presented hash matches `previous_refresh_token_hash` AND grace not expired | Rotate, consume grace (single-flight / network-retry safety) |
+| Presented hash matches current `refresh_token_hash` | Rotate, demote old current into a 60-second grace window; slide `session_started_at` forward |
+| Presented hash matches `previous_refresh_token_hash` AND grace not expired | Rotate, consume grace (single-flight / network-retry safety); slide `session_started_at` forward |
 | Neither | **401** — caller should re-login |
 
-The absolute session lifetime is capped at 14 days (configurable) regardless of refresh activity. After 14 days the user must log in again.
+**Slide-on-refresh**: there is **no absolute session cap** in this build. Every successful `/refresh` slides `session_started_at` forward to `now()`, so an active user who keeps refreshing stays logged in indefinitely. This is an explicit UX-over-security choice (the project is for a small trusted-user group); do **not** mistake it for "the refresh token never expires." `refresh_token_expires_at` is still stamped but **not enforced server-side** in the rotation SQL — for `/refresh` to lock a user out, the presented hash must simply not match either slot (e.g. after `/logout`). Reintroducing an absolute cap is a single predicate change documented at `persistence/db.py:rotate_refresh_token`.
 
 > **Frontend contract**: store both `access_token` and `refresh_token`. Single-flight concurrent refresh calls (dedupe to one shared in-flight promise). For multi-tab apps, coordinate via `BroadcastChannel` so the second tab inherits the new pair instead of racing — otherwise one tab will lose the race and see a spurious 401, requiring a re-login there.
 
@@ -289,7 +289,28 @@ Return the cached album cover art for a downloaded track.
 
 Queue a track for background download (low-priority bucket, jitter 4-8s, macro-pause 30s every 15 downloads).
 
-**Response** (202):
+The endpoint is idempotent and **state-aware** — three branches by the row's current `download_status`:
+
+| Current row state | Response | Side effect |
+|---|---|---|
+| `completed` | 200 + `"status": "success"` | none — file is on disk, stream URL works immediately |
+| `pending` / `downloading` | 202 + `"status": "queued"` | none — already queued; caller is told to wait |
+| `failed` | 202 + `"status": "queued"` | flips the row to `pending` and re-queues the worker |
+| `discovered` (metadata-only) | 202 + `"status": "queued"` | **promotes** the row to `pending` and queues a real download, reusing the cached title + reusing the album's `cover_url` if the track is FK-linked to an album |
+| no row at all | 202 + `"status": "queued"` | fetches YT metadata, inserts a `pending` row, queues the worker |
+
+**Response** (200 — already completed):
+```json
+{
+  "status": "success",
+  "video_id": "hTWKbfoikeg",
+  "title": "Smells Like Teen Spirit",
+  "message": "Track is already available locally",
+  "stream_url": "/api/tracks/stream/hTWKbfoikeg"
+}
+```
+
+**Response** (202 — queued, includes fresh + promoted + retry paths):
 ```json
 {
   "status": "queued",
@@ -300,16 +321,7 @@ Queue a track for background download (low-priority bucket, jitter 4-8s, macro-p
 }
 ```
 
-If already downloaded (200):
-```json
-{
-  "status": "success",
-  "video_id": "hTWKbfoikeg",
-  "title": "Smells Like Teen Spirit",
-  "message": "Track is already available locally",
-  "stream_url": "/api/tracks/stream/hTWKbfoikeg"
-}
-```
+When the row is in `discovered` state (e.g. user opened the album and saw all 12 tracks in cache before any were downloaded), the same shape applies but the underlying row transitions `discovered → pending` and the worker uses the row's existing `title` metadata instead of re-fetching from YouTube. This is what makes Bug 1 ("partial-album download then re-open gives you only the downloaded track") impossible: every cached album track gets a real download on first user click without a redundant `get_track_metadata` YT call.
 
 ### GET /api/tracks
 
@@ -340,7 +352,7 @@ List all locally downloaded tracks.
 
 ### GET /api/tracks/{video_id}
 
-Get full metadata for a track, including lyrics from disk files.
+Get full metadata for a track in any state (completed, pending, downloading, failed, or merely `discovered` from an album-cache seed). Includes lyrics from disk files when present.
 
 **Response** (200):
 ```json
@@ -358,6 +370,10 @@ Get full metadata for a track, including lyrics from disk files.
   "cover_url": "/api/tracks/cover/hTWKbfoikeg"
 }
 ```
+
+**`download_status` field** echoes whichever of `pending | downloading | completed | failed | discovered` applies (the full CHECK-constrained union on `tracks.download_status`). A track in state `discovered` was seeded from an album cache fetch and has title/duration but no audio file yet — `stream_url` will 404, `cover_url` may fall back to fetching on-demand.
+
+**`has_lyrics`** is `false` while a track is `pending` or `downloading` (the `.txt`/`.lrc` files don't exist yet).
 
 **Lyrics**: Plain text in `.txt` and synced LRC in `.lrc` files on disk (editable with `nano`).
 
@@ -431,18 +447,18 @@ Get related songs, playlists, and artists for a track from YouTube Music's "Rela
 
 ## Albums & Artists
 
-### GET /api/albums/{browse_id}?refresh=false
+### GET /api/albums/{album_id}?refresh=false
 
 Get album details with track list and download status. Cached in local DB for subsequent calls.
 
 **Parameters**:
-- `browse_id` (required): YouTube Music album browse ID (e.g., `MPREb_jPOYfjGgApr`)
+- `album_id` (required): YouTube Music album browse ID (e.g., `MPREb_jPOYfjGgApr`), or a curator-minted local album id (`local_album_…`)
 - `refresh` (optional, default `false`): bypass cache and fetch fresh data
 
 **Response** (200):
 ```json
 {
-  "browse_id": "MPREb_nnFV6SxNfSN",
+  "id": "MPREb_nnFV6SxNfSN",
   "title": "Fake News",
   "artists": [
     {
@@ -452,7 +468,7 @@ Get album details with track list and download status. Cached in local DB for su
   ],
   "year": 2021,
   "track_count": 16,
-  "cover_url": "https://yt3.googleusercontent.com/...",
+  "cover_url": "/api/albums/cover/MPREb_nnFV6SxNfSN",
   "downloaded_count": 16,
   "cached": true,
   "tracks": [
@@ -464,23 +480,41 @@ Get album details with track list and download status. Cached in local DB for su
       "video_type": "ATV",
       "is_downloaded": true,
       "download_status": "completed"
+    },
+    {
+      "video_id": "abc123def456",
+      "title": "Not Yet Downloaded",
+      "artists": ["Pinguini Tattici Nucleari"],
+      "duration": "4:12",
+      "video_type": "ATV",
+      "is_downloaded": false,
+      "download_status": "discovered"
     }
   ]
 }
 ```
 
 **Key behavior**:
-- OMV (Official Music Video) tracks are automatically resolved to ATV (Audio Track) versions.
-- The resolved track list is cached in the `albums` DB table (JSONB).
-- `video_type`: `ATV` (audio only) or `OMV` (music video).
-- `is_downloaded`: live check against the `tracks` table.
+- OMV (Official Music Video) tracks are automatically resolved to ATV (Audio Track) versions during the fresh fetch; the resolved `video_id` is what is stored and returned (so cache hits never re-resolve).
+- The album row itself only stores scalars (`title`, `year`, `track_count`, `cover_url`, `is_curator`); the canonical track list comes from a JOIN against the `tracks` table through the `tracks.album_id` FK.
+- **`tracks[]` length matches `track_count` even before the user downloads anything.** Every fresh album fetch seeds metadata-only `discovered` rows for ALL the album's tracks via `TrackService._seed_discovered_tracks` → `TrackRepository.create_discovered_batch`. Concretely: open the album → the response shows all 12 → click *download* on ONE → re-open → all 12 still appear, with one marked `is_downloaded: true` and the other 11 as `download_status: "discovered"`.
+- `video_type`: `ATV` (audio only) or `OMV` (music video). For curator-uploaded tracks it's `"ATV"` (we don't re-scrape for the legacy placeholder).
+- `is_downloaded`: live check against the `tracks.download_status = 'completed'`. The `download_status` field on each track carries the union `pending | downloading | completed | failed | discovered` (the new constraint on the schema).
+- `cover_url`: this field is auto-rewritten to `/api/albums/cover/{album_id}` whenever a local copy of the cover image exists (curator upload OR md5-keyed auto-cached). Falls back to the raw Google CDN URL when neither does. The raw URL is preserved in `albums.cover_url` (not returned) for refresh logic.
 
-### GET /api/albums/cover/{browse_id}
+### GET /api/albums/cover/{album_id}
 
-Serve the locally uploaded cover art for an album.
+Serve the cover art for an album.
 
-**Response** (200): Image file (JPEG/PNG/WebP).
-**Response** (404): Cover art for this album not found.
+Resolution order:
+1. Curator-uploaded `album_{album_id}.{ext}` in `THUMBNAILS_DIR`
+2. Already-cached auto-fetched `{md5(cover_url)}.jpg` (the on-disk key used by `services.download_worker.handle_cover_cache`)
+3. Lazy fetch from Google's CDN: when neither path exists, the endpoint calls `handle_cover_cache(albums.cover_url)` synchronously and saves to the md5-keyed path before serving. ~200KB first-time cost; cache-only after.
+
+The `cover_url` field on `GET /api/albums/{album_id}` is automatically rewritten to this path whenever a local copy exists (path 1 or 2); the raw remote URL is preserved only in `albums.cover_url` for refresh logic.
+
+**Response** (200): Image file (JPEG/PNG/WebP), `Cache-Control: public, max-age=86400`.
+**Response** (404): Album not found, OR no `cover_url` to fetch.
 
 ### GET /api/artists/{channel_id}
 
@@ -505,20 +539,29 @@ Get artist details from YouTube Music with enriched download status.
       "artists": ["Pinguini Tattici Nucleari"],
       "duration": "3:30",
       "is_downloaded": true,
-      "download_status": "completed"
-    }
-  ],
-  "albums": [
+      "download_status": "completed",
+      "album_art": "https://lh3.googleusercontent.com/..."
+    },
     {
-      "browse_id": "MPREb_nnFV6SxNfSN",
-      "title": "Fake News",
-      "year": 2021,
+      "video_id": "abc987def654",
+      "title": "Not Yet Downloaded",
+      "artists": ["Pinguini Tattici Nucleari"],
+      "duration": "4:12",
+      "is_downloaded": false,
+      "download_status": null,
+      "album_art": "https://lh3.googleusercontent.com/..."
+    }
+  ],    "albums": [
+      {
+        "id": "MPREb_nnFV6SxNfSN",
+        "title": "Fake News",
+        "year": 2021,
       "cover_url": "https://..."
     }
   ],
   "singles": [
     {
-      "browse_id": "MPREb_...",
+      "id": "MPREb_...",
       "title": "New Single",
       "year": 2024
     }
@@ -526,7 +569,15 @@ Get artist details from YouTube Music with enriched download status.
 }
 ```
 
-### POST /api/albums/download/{browse_id}
+**Notes — `top_songs[].album_art`**:
+
+- Always present in the response (may be `null` if YouTube Music returned no thumbnail for that song). Returned unconditionally for both downloaded and not-yet-downloaded tracks.
+- For tracks where `is_downloaded: false`, use `album_art` directly — there is no local cover at `/api/tracks/cover/{video_id}` (404). This mirrors the same convention as `album_art` in `/api/search` YouTube-track results.
+- For tracks where `is_downloaded: true`, prefer `/api/tracks/cover/{video_id}` (CORS-free, can serve while offline); fall back to `album_art` if the local cover fails.
+- `albums[].cover_url` already carries the album's remote cover art under a different key (`cover_url`, not `album_art`).
+- `singles[]` carries no cover field — YouTube Music does not surface single-art in the artist response shape.
+
+### POST /api/albums/download/{album_id}
 
 Download all tracks from an album in background. Also caches album metadata.
 
@@ -553,9 +604,27 @@ Download all tracks from an album in background. Also caches album metadata.
 
 ### GET /api/favorites
 
-List the current user's favorite tracks.
+List the current user's favorite tracks. JOINs with the `tracks` table so each row carries full metadata plus cover/stream URLs — no per-row enrichment needed by the client.
 
-**Response** (200): Array of track objects (same shape as `GET /api/tracks`).
+**Response** (200):
+```json
+[
+  {
+    "video_id": "hTWKbfoikeg",
+    "title": "Smells Like Teen Spirit",
+    "artists": ["Nirvana"],
+    "album": "Nevermind",
+    "album_id": "MPREb_jPOYfjGgApr",
+    "duration_seconds": 278,
+    "download_status": "completed",
+    "cover_url": "/api/tracks/cover/hTWKbfoikeg",
+    "stream_url": "/api/tracks/stream/hTWKbfoikeg",
+    "favorited_at": "2026-07-14T16:00:00"
+  }
+]
+```
+
+Ordered by `favorited_at` desc. INNER JOIN is safe here because `favorites.track_id` has `ON DELETE CASCADE` against `tracks.id` — orphaned references cannot exist.
 
 ### GET /api/favorites/{track_id}
 
@@ -617,15 +686,17 @@ Get playlist details with tracks. Ownership check: private playlists are only vi
   "updated_at": "...",
   "tracks": [
     {
-      "track_id": "hTWKbfoikeg",
-      "position": 1,
-      "added_at": "...",
-      "id": "hTWKbfoikeg",
+      "video_id": "hTWKbfoikeg",
       "title": "Smells Like Teen Spirit",
       "artists": ["Nirvana"],
       "album": "Nevermind",
-      "duration": 278,
-      "download_status": "completed"
+      "album_id": "MPREb_jPOYfjGgApr",
+      "duration_seconds": 278,
+      "download_status": "completed",
+      "cover_url": "/api/tracks/cover/hTWKbfoikeg",
+      "stream_url": "/api/tracks/stream/hTWKbfoikeg",
+      "position": 1,
+      "added_at": "..."
     }
   ]
 }
@@ -768,9 +839,26 @@ Reorder tracks in a playlist. The `new_order` array must contain all track_ids i
 
 ### GET /api/playlists/{id}/tracks
 
-Get tracks in a playlist, ordered by position.
+Get tracks in a playlist, ordered by position. JOINs with the `tracks` table so each row carries full metadata plus cover/stream URLs.
 
-**Response** (200): Array of track objects (same shape as in `GET /api/playlists/{id}`).
+**Response** (200):
+```json
+[
+  {
+    "video_id": "hTWKbfoikeg",
+    "title": "Smells Like Teen Spirit",
+    "artists": ["Nirvana"],
+    "album": "Nevermind",
+    "album_id": "MPREb_jPOYfjGgApr",
+    "duration_seconds": 278,
+    "download_status": "completed",
+    "cover_url": "/api/tracks/cover/hTWKbfoikeg",
+    "stream_url": "/api/tracks/stream/hTWKbfoikeg",
+    "position": 1,
+    "added_at": "..."
+  }
+]
+```
 
 ---
 
@@ -797,16 +885,22 @@ Record that the current user listened to a track.
 
 ### GET /api/history
 
-Get the current user's listening history (most recent 75 entries).
+Get the current user's listening history (most recent 75 entries, ordered by `listened_at` desc). JOINs with the `tracks` table so each record carries full metadata plus cover/stream URLs.
 
 **Response** (200):
 ```json
 {
   "records": [
     {
-      "id": 1,
-      "user_id": 1,
-      "track_id": "hTWKbfoikeg",
+      "video_id": "hTWKbfoikeg",
+      "title": "Smells Like Teen Spirit",
+      "artists": ["Nirvana"],
+      "album": "Nevermind",
+      "album_id": "MPREb_jPOYfjGgApr",
+      "duration_seconds": 278,
+      "download_status": "completed",
+      "cover_url": "/api/tracks/cover/hTWKbfoikeg",
+      "stream_url": "/api/tracks/stream/hTWKbfoikeg",
       "listened_at": "2026-07-10T12:00:00"
     }
   ]
@@ -908,7 +1002,7 @@ Library statistics and disk usage.
 {
   "status": "success",
   "stats": {
-    "tracks": { "total": 250, "completed": 230, "pending": 15, "failed": 5 },
+    "tracks": { "total": 250, "completed": 230, "pending": 15, "failed": 5, "discovered": 0 },
     "disk": {
       "tracks_size_mb": 1240.5,
       "thumbnails_size_mb": 45.2,
@@ -1134,8 +1228,8 @@ Replace the cover art for a track.
 ### POST /api/curator/albums
 
 Create a local album from tracks already in the library.
-Generates a `local_album_{id}` browse_id and links all listed tracks to it.
-After creation the album is immediately accessible via `GET /api/albums/{browse_id}`.
+Generates a `local_album_{id}` album id and links all listed tracks to it.
+After creation the album is immediately accessible via `GET /api/albums/{album_id}`.
 
 **Request** (JSON):
 ```json
@@ -1151,7 +1245,7 @@ After creation the album is immediately accessible via `GET /api/albums/{browse_
 ```json
 {
   "status": "created",
-  "browse_id": "local_album_a1b2c3d4e5f6",
+  "id": "local_album_a1b2c3d4e5f6",
   "title": "My Album",
   "track_count": 3,
   "skipped_track_ids": [],
@@ -1161,7 +1255,7 @@ After creation the album is immediately accessible via `GET /api/albums/{browse_
 
 `skipped_track_ids` lists any IDs from `track_ids` that were not found in the library (non-fatal).
 
-### POST /api/curator/albums/{browse_id}/cover
+### POST /api/curator/albums/{album_id}/cover
 
 Upload or replace a local cover photo for an album. Saved in the thumbnails directory.
 
@@ -1172,7 +1266,7 @@ Upload or replace a local cover photo for an album. Saved in the thumbnails dire
 ```json
 {
   "status": "updated",
-  "browse_id": "local_album_a1b2c3d4e5f6",
+  "id": "local_album_a1b2c3d4e5f6",
   "cover_url": "/api/albums/cover/local_album_a1b2c3d4e5f6"
 }
 ```
@@ -1219,6 +1313,60 @@ Upload or replace a local artist's cover photo.
 ## Local Artists
 
 Local artists are created by curators and stored entirely on the VPS (no YouTube Music dependency).
+
+### GET /api/artists/by-name/{name}
+
+Case-insensitive exact-name lookup against the unified artists directory (`local_artists` table, covers both YouTube channel IDs and curator-created local artists). Used by the frontend to make artist names clickable when the backend only has the name (e.g. search results, album track listings).
+
+When multiple rows match (rare — YouTube channel + local artist with the same name), results are ordered YouTube-first, then local. The frontend can pick the first row for click-navigation, or surface a disambiguation picker.
+
+**Response** (200):
+```json
+{
+  "status": "success",
+  "count": 1,
+  "artists": [
+    {
+      "id": "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+      "name": "GoogleDevelopers",
+      "is_local": false,
+      "bio": null,
+      "cover_path": null,
+      "created_at": "2026-07-14T12:00:00"
+    }
+  ]
+}
+```
+
+`is_local` is `false` for YouTube-discovered artists and `true` for curator-created artists. `cover_path` is populated only for local artists that have a custom cover uploaded.
+
+### GET /api/artists/directory
+
+Paginated directory browse of all artists (YouTube + local), sorted alphabetically by name. Used by the frontend's "All Artists" browse page and the curator artist-picker.
+
+**Query parameters**:
+- `page` (int, default `1`) — 1-indexed page number
+- `page_size` (int, default `50`, max `200`) — number of rows per page
+
+**Response** (200):
+```json
+{
+  "status": "success",
+  "page": 1,
+  "page_size": 50,
+  "total": 312,
+  "artists": [
+    {
+      "id": "UC_x5XG1OV2P6uZZ5FSM9Ttw",
+      "name": "GoogleDevelopers",
+      "is_local": false,
+      "bio": null,
+      "cover_path": null,
+      "created_at": "2026-07-14T12:00:00"
+    }
+  ]
+}
+```
 
 ### GET /api/artists/local
 
@@ -1281,11 +1429,11 @@ Returns the same shape as `GET /api/artists/{channel_id}` so the frontend can ha
 ## Local Albums
 
 Local albums are created by curators and stored in the same `albums` table as YouTube albums.
-Their `browse_id` starts with `local_album_`. The existing `GET /api/albums/{browse_id}` serves them with no special frontend handling needed.
+Their `id` starts with `local_album_`. The existing `GET /api/albums/{album_id}` serves them with no special frontend handling needed.
 
 ### GET /api/albums/local
 
-List all locally-created albums (curator-created, `browse_id` starts with `local_album_`).
+List all locally-created albums (curator-created, `id` starts with `local_album_`).
 Sorted alphabetically by title. Useful for the frontend's "Local Library" browse section and curator management.
 
 **Response** (200):
@@ -1295,7 +1443,7 @@ Sorted alphabetically by title. Useful for the frontend's "Local Library" browse
   "count": 5,
   "albums": [
     {
-      "browse_id": "local_album_abc123def456",
+      "id": "local_album_abc123def456",
       "title": "My Album",
       "artists": ["My Band"],
       "year": 2024,
@@ -1338,7 +1486,7 @@ The backend uses **two independent download buckets** with different priorities:
 | Macro-pause | 30 seconds every 15 consecutive downloads |
 | Pre-emption | Waits when streaming is active |
 | Counter reset | Resets after streaming interruption |
-| Used by | `POST /api/tracks/download/{id}`, `POST /api/albums/download/{browse_id}`, `POST /api/favorites/{track_id}`, `POST /api/playlists/{id}/tracks` |
+| Used by | `POST /api/tracks/download/{id}`, `POST /api/albums/download/{album_id}`, `POST /api/favorites/{track_id}`, `POST /api/playlists/{id}/tracks` |
 
 ### YouTube Retry (both buckets)
 
@@ -1347,6 +1495,25 @@ The backend uses **two independent download buckets** with different priorities:
 | 1 | Immediate |
 | 2 | 5 seconds |
 | 3 | 15 seconds |
+
+### Track State Machine (`tracks.download_status`)
+
+A CHECK constraint on `tracks.download_status` locks the union to five values. Each entry has a clear semantic and the workers that mutate it:
+
+| Value | Meaning | Set by | Promoted to `pending` by |
+|---|---|---|---|
+| `discovered` | Metadata-only row seeded from `AlbumService._seed_discovered_tracks`. No audio file yet. Album-detail cache gives the user all-track visibility before any download. | `TrackRepository.create_discovered_batch` (album fetch path) | a single-track download OR add-to-favourite OR add-to-playlist |
+| `pending` | Queued for download, not yet picked up by the worker. | `create_pending`, `update_status_to_pending` (from `failed`/`discovered`) | (already there) |
+| `downloading` | Worker holds the streaming/background lock and is actively pulling from YouTube. | `update_status_to_downloading` | (already there) |
+| `completed` | Terminal: file on disk, cover on disk, lyrics on disk. Streamable immediately. | `update_status_to_completed` | (terminal; admin DELETE only) |
+| `failed` | Retries exhausted. Caller can re-trigger via `POST /api/admin/retry-failed` or implicitly on the next single-track download. | `update_status_to_failed` | `update_status_to_pending` (next single-track download OR admin bulk retry) |
+
+**Critical invariants**:
+
+- `discovered` does NOT auto-trigger a download. It only promotes to `pending` on an explicit user action (`/api/tracks/download/{id}`, `/api/favorites/{track_id}`, `/api/playlists/{id}/tracks`).
+- The `discovered → pending` promotion reuses the row's existing `title`/`duration`/`album_id` (no fresh `get_track_metadata` YT call) and reuses the album's `cover_url` if the row is FK-linked (no fresh CDN GET — `handle_cover_cache` finds the md5-keyed file on disk).
+- Ordering of the promotion: cover lookup → status flip → task schedule. If the cover lookup raises, the row stays at `discovered`/`failed` rather than wedging at `pending` with no background task queued.
+- `create_discovered_batch` uses `ON CONFLICT (id) DO NOTHING` so re-caching an album never downgrades a row that's already `completed`/`pending`/`downloading` to `discovered`.
 
 ---
 

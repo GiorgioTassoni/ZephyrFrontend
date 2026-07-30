@@ -21,6 +21,8 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
   Artist? _artist;
   bool _isLoading = true;
   String? _error;
+  bool _showAllAlbums = false;
+  bool _showAllSingles = false;
 
   @override
   void initState() {
@@ -100,7 +102,11 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                     decoration: BoxDecoration(
                       image: _artist!.coverUrl != null && _artist!.coverUrl!.isNotEmpty
                           ? DecorationImage(
-                              image: NetworkImage(_artist!.coverUrl!),
+                              image: NetworkImage(
+                                _artist!.coverUrl!.startsWith('/')
+                                    ? '${_api.baseUrl}${_artist!.coverUrl!}'
+                                    : _artist!.coverUrl!,
+                              ),
                               fit: BoxFit.cover,
                               colorFilter: ColorFilter.mode(
                                 Colors.black.withOpacity(0.5),
@@ -200,17 +206,31 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
 
                     // Albums Section
                     if (albums.isNotEmpty) ...[
-                      const Text(
-                        'Albums',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: ZephyrColors.text),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'Albums',
+                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: ZephyrColors.text),
+                          ),
+                          if (albums.length > 5)
+                            TextButton(
+                              onPressed: () => setState(() => _showAllAlbums = !_showAllAlbums),
+                              child: Text(
+                                _showAllAlbums ? 'Show Less' : 'Show All (${albums.length})',
+                                style: const TextStyle(color: ZephyrColors.primary, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       GridView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        itemCount: albums.length,
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 5,
+                        itemCount: _showAllAlbums ? albums.length : albums.length.clamp(0, 5),
+                        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 200,
                           crossAxisSpacing: 16,
                           mainAxisSpacing: 16,
                           childAspectRatio: 0.75,
@@ -230,17 +250,31 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
 
                     // Singles Section
                     if (singles.isNotEmpty) ...[
-                      const Text(
-                        'Singles and EPs',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: ZephyrColors.text),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'Singles & EPs',
+                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: ZephyrColors.text),
+                          ),
+                          if (singles.length > 5)
+                            TextButton(
+                              onPressed: () => setState(() => _showAllSingles = !_showAllSingles),
+                              child: Text(
+                                _showAllSingles ? 'Show Less' : 'Show All (${singles.length})',
+                                style: const TextStyle(color: ZephyrColors.primary, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       GridView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        itemCount: singles.length,
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 5,
+                        itemCount: _showAllSingles ? singles.length : singles.length.clamp(0, 5),
+                        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 200,
                           crossAxisSpacing: 16,
                           mainAxisSpacing: 16,
                           childAspectRatio: 0.75,

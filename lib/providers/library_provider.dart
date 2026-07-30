@@ -95,21 +95,21 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
       for (final entry in history) {
         Track? matchedTrack = entry.track;
-        if (matchedTrack == null) {
+        if (matchedTrack == null || matchedTrack.artists.isEmpty) {
           // search in downloaded
           try {
             matchedTrack =
-                tracks.firstWhere((t) => t.videoId == entry.trackId);
+                tracks.firstWhere((t) => t.videoId == entry.trackId && t.artists.isNotEmpty);
           } catch (_) {
             // search in favorites
             try {
               matchedTrack =
-                  favorites.firstWhere((t) => t.videoId == entry.trackId);
+                  favorites.firstWhere((t) => t.videoId == entry.trackId && t.artists.isNotEmpty);
             } catch (_) {}
           }
         }
 
-        if (matchedTrack != null) {
+        if (matchedTrack != null && matchedTrack.artists.isNotEmpty) {
           enrichedHistoryList.add(HistoryEntry(
             id: entry.id,
             userId: entry.userId,
@@ -118,7 +118,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
             track: matchedTrack,
           ));
         } else {
-          // If we couldn't match locally, fetch from the API!
+          // If we couldn't match locally or artists is empty, fetch from the API!
           final future =
               _api.getTrackMetadata(entry.trackId).then((trackMeta) {
             enrichedHistoryList.add(HistoryEntry(
@@ -352,8 +352,16 @@ class LibraryNotifier extends Notifier<LibraryState> {
       await _api.addTrackToPlaylist(playlistId, track.videoId);
       await loadLibrary();
     } catch (e) {
-      state = state.copyWith(
-          errorMessage: 'Failed to add track to playlist: $e');
+      final errStr = e.toString().toLowerCase();
+      final isDuplicate = errStr.contains('duplicate') ||
+          errStr.contains('already') ||
+          errStr.contains('400') ||
+          errStr.contains('409');
+      final userMessage = isDuplicate
+          ? 'Track is already in this playlist'
+          : 'Failed to add track to playlist: $e';
+      state = state.copyWith(errorMessage: userMessage);
+      rethrow;
     }
   }
 

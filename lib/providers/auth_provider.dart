@@ -9,6 +9,9 @@ class AuthState {
   final bool isApproved;
   final bool isLoading;
   final String? errorMessage;
+  /// S-07: Set to true when the backend requires the user to rotate their
+  /// password before any protected endpoint will accept them.
+  final bool mustChangePassword;
 
   AuthState({
     this.token,
@@ -17,6 +20,7 @@ class AuthState {
     this.isApproved = false,
     this.isLoading = false,
     this.errorMessage,
+    this.mustChangePassword = false,
   });
 
   bool get isAuthenticated => token != null && isApproved;
@@ -30,6 +34,7 @@ class AuthState {
     bool? isApproved,
     bool? isLoading,
     String? errorMessage,
+    bool? mustChangePassword,
   }) {
     return AuthState(
       token: token ?? this.token,
@@ -38,6 +43,7 @@ class AuthState {
       isApproved: isApproved ?? this.isApproved,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage,
+      mustChangePassword: mustChangePassword ?? this.mustChangePassword,
     );
   }
 }
@@ -92,7 +98,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
         print("[AuthNotifier] Cached token valid. Auto-login successful.");
         state = AuthState(
-          token: token,
+          token: _api.token ?? token,
           username: username,
           role: role,
           isApproved: isApproved,
@@ -120,6 +126,8 @@ class AuthNotifier extends Notifier<AuthState> {
       final approved = res['is_approved'] ?? false;
       final role =
           res['role'] ?? (res['is_admin'] == true ? 'admin' : 'user');
+      // S-07: check forced password rotation flag
+      final mustChangePwd = res['must_change_password'] == true;
 
       if (!approved) {
         print("[AuthNotifier] Login failed: pending admin approval.");
@@ -143,13 +151,14 @@ class AuthNotifier extends Notifier<AuthState> {
         forceLogout('New session detected, disconnected');
       };
 
-      print("[AuthNotifier] Login successful.");
+      print("[AuthNotifier] Login successful. mustChangePassword=$mustChangePwd");
       state = AuthState(
         token: token,
         username: username,
         role: role,
         isApproved: approved,
         isLoading: false,
+        mustChangePassword: mustChangePwd,
       );
       return true;
     } catch (e) {
@@ -229,6 +238,36 @@ class AuthNotifier extends Notifier<AuthState> {
 
   Future<void> updateServerUrl(String url) async {
     await _api.setBaseUrl(url);
+  }
+
+  // --- S-07: Forced password rotation ---
+
+  /// Submit a password change. On success the backend wipes the entire
+  /// session family, so we clear local tokens and force a re-login.
+  /// Returns null on success or an error message string.
+  Future<String?> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      await _api.changePassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+      // Session wiped server-side — clear everything locally too
+      await _api.clearAuth();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('zephyr_auth_token');
+      await prefs.remove('zephyr_refresh_token');
+      await prefs.remove('zephyr_username');
+      await prefs.remove('zephyr_is_admin');
+      await prefs.remove('zephyr_role');
+      await prefs.remove('zephyr_is_approved');
+      state = AuthState(isLoading: false); // back to login screen
+      return null;
+    } catch (e) {
+      return e.toString();
+    }
   }
 }
 

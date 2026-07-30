@@ -315,7 +315,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 80,
+            height: 72,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               itemCount: _artists.length,
@@ -324,22 +324,44 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 return Container(
                   width: 220,
                   margin: const EdgeInsets.only(right: 16),
+                  decoration: BoxDecoration(
+                    color: ZephyrColors.bgCard,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   child: Material(
-                    type: MaterialType.transparency,
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundImage: artist.coverUrl != null && artist.coverUrl!.isNotEmpty
-                            ? NetworkImage(artist.coverUrl!)
-                            : null,
-                        backgroundColor: ZephyrColors.bgLight,
-                        child: artist.coverUrl == null ? const Icon(Icons.person) : null,
-                      ),
-                      title: Text(artist.name, overflow: TextOverflow.ellipsis),
-                      tileColor: ZephyrColors.bgCard,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
                       onTap: () {
                         navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: artist.channelId));
                       },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            CoverImage(
+                              coverUrl: artist.coverUrl,
+                              size: 48,
+                              borderRadius: 24,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                artist.name,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 2,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: ZephyrColors.text,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 );

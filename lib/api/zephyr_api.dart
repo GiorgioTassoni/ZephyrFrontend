@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,6 +11,11 @@ class ZephyrApi {
   String? _refreshToken; // long-lived refresh token (opaque, 14 days)
   void Function()? onUnauthorized;
   void Function(String token)? onTokenRefreshed;
+
+  // Local proxy server for audio streaming (injects Authorization header
+  // so audioplayers never has to embed the token in the URL — S-03 compliance).
+  HttpServer? _proxyServer;
+  int _proxyPort = 0;
 
   static final ZephyrApi _instance = ZephyrApi._internal();
 
@@ -56,14 +62,25 @@ class ZephyrApi {
     _loadSettings();
   }
 
-  bool _isRefreshing = false;
+  Future<bool>? _refreshFuture;
 
   /// Rotate the refresh token and mint a new access + refresh pair.
-  /// The refresh token (not the access token) is sent as the Bearer credential.
+  /// Uses a single-flight Future so concurrent 401s share the same refresh attempt.
   Future<bool> _tryRefresh() async {
-    if (_isRefreshing) return false;
     if (_refreshToken == null) return false;
-    _isRefreshing = true;
+    if (_refreshFuture != null) {
+      return _refreshFuture!;
+    }
+
+    _refreshFuture = _executeRefresh();
+    try {
+      return await _refreshFuture!;
+    } finally {
+      _refreshFuture = null;
+    }
+  }
+
+  Future<bool> _executeRefresh() async {
     try {
       final response = await _dio.post(
         '/api/auth/refresh',
@@ -84,8 +101,6 @@ class ZephyrApi {
       return false;
     } catch (_) {
       return false;
-    } finally {
-      _isRefreshing = false;
     }
   }
 
@@ -198,10 +213,65 @@ class ZephyrApi {
 
   // --- Tracks ---
 
-  String getStreamUrl(String videoId) {
-    return '$_baseUrl/api/tracks/stream/$videoId';
+  /// Returns a proxy URL (localhost) for the audio player so that the
+  /// actual Authorization header is injected by our local proxy — never
+  /// embedded as a query parameter (S-03 compliance).
+  Future<String> getStreamProxyUrl(String videoId) async {
+    if (_proxyServer == null) {
+      await _startProxyServer();
+    }
+    return 'http://localhost:$_proxyPort/stream/$videoId';
   }
 
+  /// Starts a lightweight local HTTP proxy on a random port.
+  /// Intercepts /stream/<videoId> requests and forwards them to the
+  /// backend with the Authorization header injected.
+  Future<void> _startProxyServer() async {
+    _proxyServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _proxyPort = _proxyServer!.port;
+    _proxyServer!.listen((HttpRequest req) async {
+      final videoId = req.uri.pathSegments.length >= 2
+          ? req.uri.pathSegments.last
+          : '';
+      final backendUrl = Uri.parse('$_baseUrl/api/tracks/stream/$videoId');
+
+      try {
+        final client = HttpClient();
+        final backendReq = await client.getUrl(backendUrl);
+        if (_token != null) {
+          backendReq.headers.set('Authorization', 'Bearer $_token');
+        }
+        // Forward Range header from audioplayers if present
+        final rangeHeader = req.headers.value('range');
+        if (rangeHeader != null) {
+          backendReq.headers.set('range', rangeHeader);
+        }
+        final backendResp = await backendReq.close();
+
+        req.response.statusCode = backendResp.statusCode;
+        backendResp.headers.forEach((name, values) {
+          try {
+            req.response.headers.set(name, values.join(','));
+          } catch (_) {}
+        });
+        await backendResp.pipe(req.response);
+        client.close();
+      } catch (e) {
+        req.response.statusCode = HttpStatus.badGateway;
+        await req.response.close();
+      }
+    });
+  }
+
+  /// Stop the proxy (call on app dispose if needed).
+  Future<void> stopProxyServer() async {
+    await _proxyServer?.close(force: true);
+    _proxyServer = null;
+    _proxyPort = 0;
+  }
+
+  /// Cover image URL — token is injected via Authorization header by
+  /// CachedNetworkImage's httpHeaders, never in the URL (S-03 compliance).
   String getCoverUrl(String videoId) {
     return '$_baseUrl/api/tracks/cover/$videoId';
   }
@@ -403,7 +473,30 @@ class ZephyrApi {
   }
 
   String getPlaylistCoverUrl(int id) {
+    // Token is sent via Authorization header; never embed in URL (S-03).
     return '$_baseUrl/api/playlists/$id/cover';
+  }
+
+  // --- Password Change (S-07) ---
+
+  /// POST /api/auth/change-password
+  /// Returns the response body on 200; throws a descriptive String on error.
+  Future<Map<String, dynamic>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final response = await _dio.post(
+        '/api/auth/change-password',
+        data: {
+          'current_password': currentPassword,
+          'new_password': newPassword,
+        },
+      );
+      return response.data ?? {};
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
   }
 
   Future<void> addTrackToPlaylist(int playlistId, String trackId) async {

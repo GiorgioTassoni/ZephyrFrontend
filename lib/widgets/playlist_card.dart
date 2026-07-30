@@ -127,11 +127,9 @@ class _PlaylistCardState extends State<PlaylistCard> {
                       color: ZephyrColors.textMuted,
                     ),
                     const SizedBox(width: 4),
-                    Text(
-                      widget.playlist.tracks != null
-                          ? '${widget.playlist.tracks!.length} tracks'
-                          : 'Playlist',
-                      style: const TextStyle(
+                    const Text(
+                      'Playlist',
+                      style: TextStyle(
                         fontSize: 11,
                         color: ZephyrColors.textMuted,
                       ),

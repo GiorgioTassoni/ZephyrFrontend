@@ -21,6 +21,7 @@ class ZephyrPlayerState {
   final String? errorMessage;
   final bool isLoading;
   final double volume;
+  final double lastNonMutedVolume;
 
   ZephyrPlayerState({
     this.currentTrack,
@@ -36,6 +37,7 @@ class ZephyrPlayerState {
     this.errorMessage,
     this.isLoading = false,
     this.volume = 1.0,
+    this.lastNonMutedVolume = 1.0,
   });
 
   ZephyrPlayerState copyWith({
@@ -53,6 +55,7 @@ class ZephyrPlayerState {
     String? errorMessage,
     bool? isLoading,
     double? volume,
+    double? lastNonMutedVolume,
   }) {
     return ZephyrPlayerState(
       currentTrack: nullTrack == true ? null : (currentTrack ?? this.currentTrack),
@@ -68,6 +71,7 @@ class ZephyrPlayerState {
       errorMessage: errorMessage ?? this.errorMessage,
       isLoading: isLoading ?? this.isLoading,
       volume: volume ?? this.volume,
+      lastNonMutedVolume: lastNonMutedVolume ?? this.lastNonMutedVolume,
     );
   }
 }
@@ -171,12 +175,23 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     _hasRecordedCurrentTrack = false;
     _isInitialLoad = false;
 
-    final foundIndex = playQueue.indexWhere((t) => t.videoId == track.videoId);
+    // If track is missing artist metadata, attempt to enrich it immediately
+    Track finalTrack = track;
+    if (finalTrack.artists.isEmpty) {
+      try {
+        final meta = await _api.getTrackMetadata(track.videoId);
+        if (meta.artists.isNotEmpty) {
+          finalTrack = meta;
+        }
+      } catch (_) {}
+    }
+
+    final foundIndex = playQueue.indexWhere((t) => t.videoId == finalTrack.videoId);
     final newCurrentIndex = foundIndex != -1 ? foundIndex : state.currentIndex;
 
     state = state.copyWith(
       isLoading: true,
-      currentTrack: track,
+      currentTrack: finalTrack,
       queue: playQueue,
       originalQueue: state.isShuffled ? state.originalQueue : playQueue,
       currentIndex: newCurrentIndex,
@@ -186,20 +201,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     );
 
     try {
-      // A quick test call to check token/auth (will trigger auto-relogin if expired)
-      try {
-        await _api.getHistory();
-      } catch (_) {}
+      // Stream URL via local proxy (S-03): the proxy injects
+      // Authorization: Bearer <token> — the URL itself has no token.
+      final streamUrl = await _api.getStreamProxyUrl(finalTrack.videoId);
 
-      // Read fresh token directly from the API instance (updated by the interceptor)
-      final token = _api.token;
-      if (token == null) {
-        throw 'User is not logged in';
-      }
-
-      // Append token to stream URL as query parameter
-      final streamUrl = '${_api.getStreamUrl(track.videoId)}?token=$token';
-      
       await _audioPlayer.stop();
       await _audioPlayer.setVolume(state.volume);
       await _audioPlayer.play(ap.UrlSource(streamUrl));
@@ -257,11 +262,24 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
   Future<void> setVolume(double volume) async {
     await _audioPlayer.setVolume(volume);
-    state = state.copyWith(volume: volume);
+    state = state.copyWith(
+      volume: volume,
+      lastNonMutedVolume: volume > 0 ? volume : state.lastNonMutedVolume,
+    );
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble('player_volume', volume);
     } catch (_) {}
+  }
+
+  Future<void> toggleMute() async {
+    if (state.volume > 0) {
+      state = state.copyWith(lastNonMutedVolume: state.volume);
+      await setVolume(0.0);
+    } else {
+      final restoreVol = state.lastNonMutedVolume > 0 ? state.lastNonMutedVolume : 0.8;
+      await setVolume(restoreVol);
+    }
   }
 
   Future<void> togglePlayPause() async {

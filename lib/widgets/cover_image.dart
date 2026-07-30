@@ -12,6 +12,7 @@ class CoverImage extends ConsumerWidget {
   final String? coverUrl;
   final int? playlistId;
   final String? updatedAt;
+  final bool? isDownloaded;
   final double size;
   final double borderRadius;
 
@@ -21,6 +22,7 @@ class CoverImage extends ConsumerWidget {
     this.coverUrl,
     this.playlistId,
     this.updatedAt,
+    this.isDownloaded,
     this.size = 48,
     this.borderRadius = 8,
   });
@@ -57,16 +59,10 @@ class CoverImage extends ConsumerWidget {
         } catch (_) {}
       }
 
+      // Playlist cover: token injected via Authorization header, never in URL (S-03).
       String url = api.getPlaylistCoverUrl(playlistId!);
-      final queryParams = <String>[];
       if (cleanUpdatedAt != null && cleanUpdatedAt.isNotEmpty) {
-        queryParams.add('v=${Uri.encodeComponent(cleanUpdatedAt)}');
-      }
-      if (token != null) {
-        queryParams.add('token=${Uri.encodeComponent(token)}');
-      }
-      if (queryParams.isNotEmpty) {
-        url = '$url?${queryParams.join('&')}';
+        url = '$url?v=${Uri.encodeComponent(cleanUpdatedAt)}';
       }
 
       return ClipRRect(
@@ -76,19 +72,25 @@ class CoverImage extends ConsumerWidget {
           width: size,
           height: size,
           fit: BoxFit.cover,
-          httpHeaders: token != null ? {'Authorization': 'Bearer $token'} : null,
+          httpHeaders: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            if (token != null) 'Authorization': 'Bearer $token',
+          },
           placeholder: (context, url) => placeholder,
           errorWidget: (context, url, error) => placeholder,
         ),
       );
     }
 
-    // 2. Track Cover Image from local cover endpoint
+    // 2. Track Cover Image
     if (videoId != null) {
-      String url = api.getCoverUrl(videoId!);
-      if (token != null) {
-        url = '$url?token=${Uri.encodeComponent(token)}';
+      // For online/non-downloaded tracks, load coverUrl directly from Google CDN for fast UX
+      if (isDownloaded == false && coverUrl != null && coverUrl!.isNotEmpty) {
+        return _buildNetworkImage(coverUrl!, size, placeholder, token);
       }
+
+      String url = api.getCoverUrl(videoId!);
       return ClipRRect(
         borderRadius: BorderRadius.circular(borderRadius),
         child: CachedNetworkImage(
@@ -96,12 +98,15 @@ class CoverImage extends ConsumerWidget {
           width: size,
           height: size,
           fit: BoxFit.cover,
-          httpHeaders: token != null ? {'Authorization': 'Bearer $token'} : null,
+          httpHeaders: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            if (token != null) 'Authorization': 'Bearer $token',
+          },
           placeholder: (context, url) => placeholder,
           errorWidget: (context, url, error) {
-            // If the local cover fails, try to fall back to coverUrl if available
             if (coverUrl != null && coverUrl!.isNotEmpty) {
-              return _buildNetworkImage(coverUrl!, size, placeholder);
+              return _buildNetworkImage(coverUrl!, size, placeholder, token);
             }
             return placeholder;
           },
@@ -111,20 +116,40 @@ class CoverImage extends ConsumerWidget {
 
     // 3. YouTube/Network Cover Image
     if (coverUrl != null && coverUrl!.isNotEmpty) {
-      return _buildNetworkImage(coverUrl!, size, placeholder);
+      return _buildNetworkImage(coverUrl!, size, placeholder, token);
     }
 
     return placeholder;
   }
 
-  Widget _buildNetworkImage(String url, double size, Widget placeholder) {
+  Widget _buildNetworkImage(String url, double size, Widget placeholder, String? token) {
+    final api = ZephyrApi();
+    String fullUrl = url;
+    if (fullUrl.startsWith('/')) {
+      fullUrl = '${api.baseUrl}$fullUrl';
+    }
+
+    final isZephyrApi = fullUrl.contains('/api/');
+
+    // S-03: never append token as a query parameter.
+    // Authorization header is injected below via httpHeaders.
+    final Map<String, String> headers = {
+      'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    };
+
+    if (isZephyrApi && token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
       child: CachedNetworkImage(
-        imageUrl: url,
+        imageUrl: fullUrl,
         width: size,
         height: size,
         fit: BoxFit.cover,
+        httpHeaders: headers,
         placeholder: (context, url) => placeholder,
         errorWidget: (context, url, error) => placeholder,
       ),

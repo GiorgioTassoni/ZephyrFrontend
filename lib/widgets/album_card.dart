@@ -118,16 +118,15 @@ class _AlbumCardState extends State<AlbumCard> {
                     color: ZephyrColors.textDim,
                   ),
                 ),
-                if (widget.album.year != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    '${widget.album.year}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: ZephyrColors.textMuted,
-                    ),
+                const SizedBox(height: 2),
+                Text(
+                  widget.album.displayBadge,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: ZephyrColors.textMuted,
                   ),
-                ],
+                ),
               ],
             ),
           ),

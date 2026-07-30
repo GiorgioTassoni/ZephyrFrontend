@@ -35,41 +35,6 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
       _error = null;
     });
 
-    final isRemote = widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_');
-    if (!isRemote) {
-      try {
-        final libState = ref.read(libraryProvider);
-        final albumTracks = libState.downloadedTracks
-            .where((t) => t.album == widget.browseId || t.albumId == widget.browseId)
-            .toList();
-
-        if (albumTracks.isEmpty) {
-          throw Exception('Local album "$widget.browseId" not found in library');
-        }
-
-        final firstTrack = albumTracks.first;
-        final localAlbum = Album(
-          id: widget.browseId,
-          name: firstTrack.album ?? widget.browseId,
-          artists: firstTrack.artists,
-          coverUrl: firstTrack.coverUrl,
-          year: null,
-          tracks: albumTracks,
-        );
-
-        setState(() {
-          _album = localAlbum;
-          _isLoading = false;
-        });
-      } catch (e) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-      }
-      return;
-    }
-
     try {
       final details = await _api.getAlbumDetail(widget.browseId, refresh: bypassCache);
       setState(() {
@@ -77,6 +42,32 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      // Fallback for offline/local album lookup from library state if API fails
+      try {
+        final libState = ref.read(libraryProvider);
+        final albumTracks = libState.downloadedTracks
+            .where((t) => t.album == widget.browseId || t.albumId == widget.browseId)
+            .toList();
+
+        if (albumTracks.isNotEmpty) {
+          final firstTrack = albumTracks.first;
+          final localAlbum = Album(
+            id: widget.browseId,
+            name: firstTrack.album ?? widget.browseId,
+            artists: firstTrack.artists,
+            coverUrl: firstTrack.coverUrl,
+            year: null,
+            tracks: albumTracks,
+          );
+
+          setState(() {
+            _album = localAlbum;
+            _isLoading = false;
+          });
+          return;
+        }
+      } catch (_) {}
+
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -162,9 +153,9 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'ALBUM',
-                          style: TextStyle(
+                        Text(
+                          _album!.displayBadge,
+                          style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 1.2,

@@ -10,6 +10,7 @@ import '../providers/search_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/seek_bar.dart';
+import '../widgets/artist_links.dart';
 
 // Screens
 import 'home_screen.dart';
@@ -21,6 +22,7 @@ import 'artist_detail_screen.dart';
 import 'playlist_detail_screen.dart';
 import 'admin_screen.dart';
 import 'import_screen.dart';
+import 'favorites_screen.dart';
 import 'player_screen.dart';
 import 'queue_screen.dart';
 import 'curator_screen.dart';
@@ -51,7 +53,7 @@ class MainLayout extends ConsumerWidget {
         currentScreenWidget = LibraryScreen(initialTabIndex: navState.currentScreen.intId ?? 1);
         break;
       case ScreenType.favorites:
-        currentScreenWidget = const LibraryScreen(initialTabIndex: 0);
+        currentScreenWidget = const FavoritesScreen();
         break;
       case ScreenType.settings:
         currentScreenWidget = const SettingsScreen();
@@ -498,30 +500,39 @@ class MainLayout extends ConsumerWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: InkWell(
-                    onTap: () {
-                      if (navState.currentScreen.type == ScreenType.lyrics) {
-                        navNotifier.navigateBack();
-                      } else {
-                        navNotifier.navigateTo(const ScreenState(type: ScreenType.lyrics));
-                      }
-                    },
-                    borderRadius: BorderRadius.circular(6),
-                    child: Row(
-                      children: [
-                        CoverImage(
+                  child: Row(
+                    children: [
+                      InkWell(
+                        onTap: () {
+                          if (navState.currentScreen.type == ScreenType.lyrics) {
+                            navNotifier.navigateBack();
+                          } else {
+                            navNotifier.navigateTo(const ScreenState(type: ScreenType.lyrics));
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(6),
+                        child: CoverImage(
                           videoId: track.videoId,
                           coverUrl: track.coverUrl,
                           size: 56,
                           borderRadius: 6,
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            InkWell(
+                              onTap: () {
+                                if (navState.currentScreen.type == ScreenType.lyrics) {
+                                  navNotifier.navigateBack();
+                                } else {
+                                  navNotifier.navigateTo(const ScreenState(type: ScreenType.lyrics));
+                                }
+                              },
+                              child: Text(
                                 track.title,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -531,21 +542,19 @@ class MainLayout extends ConsumerWidget {
                                   color: ZephyrColors.text,
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                track.artists.join(', '),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: ZephyrColors.textDim,
-                                ),
+                            ),
+                            const SizedBox(height: 2),
+                            ArtistLinks(
+                              track: track,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: ZephyrColors.textDim,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
                 IconButton(
@@ -645,6 +654,8 @@ class MainLayout extends ConsumerWidget {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 IconButton(
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
                   icon: Icon(
                     Icons.queue_music,
                     color: navState.currentScreen.type == ScreenType.queue
@@ -661,8 +672,10 @@ class MainLayout extends ConsumerWidget {
                     }
                   },
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 IconButton(
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
                   icon: Icon(
                     Icons.lyrics,
                     color: navState.currentScreen.type == ScreenType.lyrics
@@ -679,9 +692,21 @@ class MainLayout extends ConsumerWidget {
                     }
                   },
                 ),
-                const SizedBox(width: 8),
-                const Icon(Icons.volume_up, color: ZephyrColors.textDim, size: 20),
-                const SizedBox(width: 2),
+                const SizedBox(width: 12),
+                IconButton(
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(),
+                  icon: Icon(
+                    state.volume == 0
+                        ? Icons.volume_off
+                        : (state.volume < 0.5 ? Icons.volume_down : Icons.volume_up),
+                    color: state.volume == 0 ? ZephyrColors.error : ZephyrColors.textDim,
+                    size: 20,
+                  ),
+                  tooltip: state.volume == 0 ? 'Unmute' : 'Mute',
+                  onPressed: () => notifier.toggleMute(),
+                ),
+                const SizedBox(width: 10),
                 // Volume slider
                 const _VolumeSlider(),
               ],

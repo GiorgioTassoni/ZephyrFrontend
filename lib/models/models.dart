@@ -32,33 +32,80 @@ class Track {
   });
 
   factory Track.fromJson(Map<String, dynamic> json) {
-    // Determine artists list
+    // Determine artists list & IDs
     List<String> artistsList = [];
-    if (json['artists'] != null) {
-      if (json['artists'] is String) {
-        artistsList = (json['artists'] as String)
+    List<String> artistsIdsList = [];
+
+    dynamic rawArtists = json['artists'] ??
+        json['artist'] ??
+        json['artist_name'] ??
+        json['artist_names'] ??
+        json['artistName'] ??
+        json['author'] ??
+        json['authors'] ??
+        json['channel'] ??
+        json['channel_name'] ??
+        json['uploader'] ??
+        json['creator'];
+
+    if (rawArtists != null) {
+      if (rawArtists is String) {
+        artistsList = rawArtists
             .split(',')
             .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
             .toList();
-      } else if (json['artists'] is List) {
-        artistsList = (json['artists'] as List).map<String>((e) {
-          if (e is Map && e.containsKey('name')) {
-            return e['name'].toString();
+      } else if (rawArtists is List) {
+        for (final e in rawArtists) {
+          if (e is Map) {
+            final name = (e['name'] ?? e['title'] ?? e['artist'] ?? '').toString().trim();
+            final id = (e['id'] ?? e['channel_id'] ?? e['artist_id'] ?? e['browse_id'] ?? e['channelId'] ?? '').toString().trim();
+            if (name.isNotEmpty) artistsList.add(name);
+            if (id.isNotEmpty) artistsIdsList.add(id);
+          } else if (e != null) {
+            final s = e.toString().trim();
+            if (s.isNotEmpty) artistsList.add(s);
           }
-          return e.toString();
-        }).toList();
+        }
+      } else if (rawArtists is Map) {
+        final name = (rawArtists['name'] ?? rawArtists['title'] ?? rawArtists['artist'] ?? '').toString().trim();
+        final id = (rawArtists['id'] ?? rawArtists['channel_id'] ?? rawArtists['artist_id'] ?? rawArtists['browse_id'] ?? rawArtists['channelId'] ?? '').toString().trim();
+        if (name.isNotEmpty) artistsList.add(name);
+        if (id.isNotEmpty) artistsIdsList.add(id);
       }
     }
 
-    // Determine artists IDs list
-    List<String> artistsIdsList = [];
-    if (json['artists_ids'] != null) {
-      if (json['artists_ids'] is List) {
-        artistsIdsList = (json['artists_ids'] as List).map<String>((e) => e.toString()).toList();
+    // Fallback if artistsList is still empty
+    if (artistsList.isEmpty) {
+      final fallbackName = (json['artist_name'] ??
+              json['artist'] ??
+              json['artistName'] ??
+              json['author'] ??
+              json['authors'] ??
+              json['channel_name'] ??
+              json['uploader'] ??
+              json['creator'] ??
+              '')
+          .toString()
+          .trim();
+      if (fallbackName.isNotEmpty) {
+        artistsList.add(fallbackName);
       }
-    } else if (json['artist_ids'] != null) {
-      if (json['artist_ids'] is List) {
-        artistsIdsList = (json['artist_ids'] as List).map<String>((e) => e.toString()).toList();
+    }
+
+    // Filter out category labels (e.g. 'Song', 'Canzone', 'Video') incorrectly returned as artist names
+    const invalidCategoryLabels = {'song', 'canzone', 'single', 'ep', 'video', 'track'};
+    artistsList = artistsList.where((a) => !invalidCategoryLabels.contains(a.trim().toLowerCase())).toList();
+
+    if (artistsIdsList.isEmpty) {
+      if (json['artists_ids'] != null && json['artists_ids'] is List) {
+        artistsIdsList = (json['artists_ids'] as List).map<String>((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList();
+      } else if (json['artist_ids'] != null && json['artist_ids'] is List) {
+        artistsIdsList = (json['artist_ids'] as List).map<String>((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList();
+      } else if (json['channel_id'] != null && json['channel_id'].toString().trim().isNotEmpty) {
+        artistsIdsList = [json['channel_id'].toString().trim()];
+      } else if (json['artist_id'] != null && json['artist_id'].toString().trim().isNotEmpty) {
+        artistsIdsList = [json['artist_id'].toString().trim()];
       }
     }
 
@@ -179,6 +226,8 @@ class Album {
   final String? coverUrl;
   final int? trackCount;
   final List<Track>? tracks;
+  final String? albumType;
+  final String? releaseDate;
 
   Album({
     required this.id,
@@ -188,7 +237,17 @@ class Album {
     this.coverUrl,
     this.trackCount,
     this.tracks,
+    this.albumType,
+    this.releaseDate,
   });
+
+  String get displayBadge {
+    final typeLabel = albumType != null && albumType!.isNotEmpty
+        ? albumType!.toUpperCase()
+        : 'ALBUM';
+    final yearLabel = year != null ? ' • $year' : (releaseDate != null && releaseDate!.isNotEmpty ? ' • ${releaseDate!.split('-').first}' : '');
+    return '$typeLabel$yearLabel';
+  }
 
   factory Album.fromJson(Map<String, dynamic> json) {
     List<String> artistsList = [];
@@ -240,6 +299,8 @@ class Album {
       coverUrl: (json['cover_url'] ?? json['album_art'] ?? json['albumArt'])?.toString(),
       trackCount: parsedTrackCount,
       tracks: tracksList,
+      albumType: (json['album_type'] ?? json['albumType'] ?? json['type'])?.toString(),
+      releaseDate: (json['release_date'] ?? json['releaseDate'])?.toString(),
     );
   }
 }
@@ -295,7 +356,7 @@ class Artist {
       description: json['description'],
       subscribers: json['subscribers'],
       monthlyListeners: json['monthly_listeners'],
-      coverUrl: json['cover_url'] ?? json['avatar_art'],
+      coverUrl: json['cover_url'] ?? json['avatar_art'] ?? json['cover_path'],
       topSongs: top,
       albums: albs,
       singles: sngls,

@@ -7,6 +7,7 @@ import '../providers/player_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/track_tile.dart';
+import '../widgets/toast.dart';
 
 class AlbumDetailScreen extends ConsumerStatefulWidget {
   final String browseId;
@@ -29,24 +30,26 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     _fetchAlbumDetails(bypassCache: false);
   }
 
-  Future<void> _fetchAlbumDetails({required bool bypassCache}) async {
+  Future<void> _fetchAlbumDetails({bool bypassCache = false}) async {
     setState(() {
       _isLoading = true;
       _error = null;
     });
 
     try {
-      final details = await _api.getAlbumDetail(widget.browseId, refresh: bypassCache);
+      final details = await _api.getAlbumDetail(widget.browseId);
       setState(() {
         _album = details;
         _isLoading = false;
       });
     } catch (e) {
-      // Fallback for offline/local album lookup from library state if API fails
+      // If remote fetch fails, check local library as fallback
       try {
-        final libState = ref.read(libraryProvider);
-        final albumTracks = libState.downloadedTracks
-            .where((t) => t.album == widget.browseId || t.albumId == widget.browseId)
+        final downloaded = await _api.getDownloadedTracks();
+        final albumTracks = downloaded
+            .where((t) =>
+                t.albumId == widget.browseId ||
+                (t.album != null && t.album!.isNotEmpty && t.album == widget.browseId))
             .toList();
 
         if (albumTracks.isNotEmpty) {
@@ -79,27 +82,24 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     if (_album == null) return;
     try {
       final response = await _api.downloadAlbum(widget.browseId);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Album download started: ${response['queued_for_download']} queued, ${response['already_downloaded']} already available.',
-          ),
-          backgroundColor: ZephyrColors.success,
-        ),
+      final queued = response['queued_for_download'] ?? 0;
+      final avail = response['already_downloaded'] ?? 0;
+      ZephyrToast.show(
+        context,
+        'Album download started: $queued queued, $avail already available.',
       );
       // Reload library to update download states
       ref.read(libraryProvider.notifier).loadLibrary();
       // Re-fetch album status
       _fetchAlbumDetails(bypassCache: false);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to download album: $e'), backgroundColor: ZephyrColors.error),
-      );
+      ZephyrToast.show(context, 'Failed to download album: $e', isError: true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(libraryProvider);
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator(color: ZephyrColors.primary));
     }
@@ -194,13 +194,22 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                             const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
                             const SizedBox(width: 12),
                             Text(
-                              '${tracks.length} songs',
+                              '${_album!.trackCount ?? tracks.length} songs',
                               style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
                             ),
+                            if (_album!.downloadedCount != null && _album!.downloadedCount! > 0) ...[
+                              const SizedBox(width: 12),
+                              const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                              const SizedBox(width: 12),
+                              Text(
+                                '${_album!.downloadedCount} downloaded',
+                                style: const TextStyle(color: ZephyrColors.success, fontSize: 14, fontWeight: FontWeight.w600),
+                              ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 20),
-                        if (widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_'))
+                        if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_'))
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: ZephyrColors.primary,

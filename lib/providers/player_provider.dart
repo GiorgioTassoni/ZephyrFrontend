@@ -4,6 +4,7 @@ import 'package:audioplayers/audioplayers.dart' as ap;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
+import '../widgets/toast.dart';
 import 'auth_provider.dart';
 import 'library_provider.dart';
 
@@ -175,9 +176,41 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     _hasRecordedCurrentTrack = false;
     _isInitialLoad = false;
 
-    // If track is missing artist metadata, attempt to enrich it immediately
+    state = state.copyWith(
+      isLoading: true,
+      currentTrack: track,
+      queue: playQueue,
+      originalQueue: state.isShuffled ? state.originalQueue : playQueue,
+      currentIndex: playQueue.indexWhere((t) => t.videoId == track.videoId),
+      position: Duration.zero,
+      duration: Duration.zero,
+      errorMessage: null,
+    );
+
     Track finalTrack = track;
-    if (finalTrack.artists.isEmpty) {
+
+    // Handle Deezer browse track resolution (dz_<int>)
+    if (finalTrack.videoId.startsWith('dz_')) {
+      try {
+        final res = await _api.queueDownload(finalTrack.videoId);
+        final resolvedId = (res['track_id'] ?? res['video_id'] ?? res['id'] ?? '').toString();
+        if (resolvedId.isNotEmpty) {
+          finalTrack = finalTrack.copyWith(
+            videoId: resolvedId,
+            ytId: res['yt_id']?.toString(),
+            isDownloaded: res['is_downloaded'] ?? (res['download_status'] == 'completed'),
+            downloadStatus: res['download_status'] ?? 'pending',
+          );
+        }
+      } catch (e) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'Could not resolve track: $e',
+        );
+        return;
+      }
+    } else if (finalTrack.artists.isEmpty) {
+      // If track is missing artist metadata, attempt to enrich it
       try {
         final meta = await _api.getTrackMetadata(track.videoId);
         if (meta.artists.isNotEmpty) {
@@ -186,32 +219,47 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       } catch (_) {}
     }
 
-    final foundIndex = playQueue.indexWhere((t) => t.videoId == finalTrack.videoId);
+    final foundIndex = playQueue.indexWhere((t) => t.videoId == track.videoId || t.videoId == finalTrack.videoId);
     final newCurrentIndex = foundIndex != -1 ? foundIndex : state.currentIndex;
 
     state = state.copyWith(
       isLoading: true,
       currentTrack: finalTrack,
-      queue: playQueue,
-      originalQueue: state.isShuffled ? state.originalQueue : playQueue,
       currentIndex: newCurrentIndex,
-      position: Duration.zero,
-      duration: Duration.zero,
-      errorMessage: null,
     );
 
-    try {
-      // Stream URL via local proxy (S-03): the proxy injects
-      // Authorization: Bearer <token> — the URL itself has no token.
-      final streamUrl = await _api.getStreamProxyUrl(finalTrack.videoId);
+    int attempts = 0;
+    bool success = false;
+    Object? lastError;
 
-      await _audioPlayer.stop();
-      await _audioPlayer.setVolume(state.volume);
-      await _audioPlayer.play(ap.UrlSource(streamUrl));
-    } catch (e) {
+    while (attempts < 3 && !success) {
+      attempts++;
+      try {
+        // Stream URL via local proxy (S-03): the proxy injects
+        // Authorization: Bearer <token> — the URL itself has no token.
+        final streamUrl = await _api.getStreamProxyUrl(finalTrack.videoId);
+
+        await _audioPlayer.stop();
+        await _audioPlayer.setVolume(state.volume);
+        await _audioPlayer.play(ap.UrlSource(streamUrl));
+        success = true;
+      } catch (e) {
+        lastError = e;
+        if (attempts < 3) {
+          // If streaming failed (e.g. 429 rate limit or buffering timeout), trigger background download
+          // so the local backend downloads & caches the audio file, then retry after a short delay
+          try {
+            await _api.queueDownload(finalTrack.videoId);
+          } catch (_) {}
+          await Future.delayed(Duration(milliseconds: 1000 * attempts));
+        }
+      }
+    }
+
+    if (!success) {
       state = state.copyWith(
         isLoading: false,
-        errorMessage: 'Playback error: $e',
+        errorMessage: 'Playback error: ${lastError ?? "Stream unavailable"}',
       );
     }
   }
@@ -255,7 +303,11 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         _isInitialLoad = false;
         await playTrack(state.currentTrack!, state.queue);
       } else {
-        await _audioPlayer.resume();
+        try {
+          await _audioPlayer.resume();
+        } catch (_) {
+          await playTrack(state.currentTrack!, state.queue);
+        }
       }
     }
   }

@@ -1,3 +1,6 @@
+import 'dart:ffi' as ffi;
+import 'dart:io';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'api/zephyr_api.dart';
@@ -28,7 +31,23 @@ String? _extractVideoIdFromDeepLink(String rawUrl) {
   return null;
 }
 
+void _disableGStreamerVideoSink() {
+  if (!Platform.isLinux) return;
+  try {
+    final nativeLib = ffi.DynamicLibrary.process();
+    final setenv = nativeLib.lookupFunction<
+        ffi.Int32 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Int32),
+        int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int)>('setenv');
+    final namePtr = 'GST_VIDEO_SINK'.toNativeUtf8();
+    final valPtr = 'fakesink'.toNativeUtf8();
+    setenv(namePtr, valPtr, 1);
+    calloc.free(namePtr);
+    calloc.free(valPtr);
+  } catch (_) {}
+}
+
 void main(List<String> args) {
+  _disableGStreamerVideoSink();
   WidgetsFlutterBinding.ensureInitialized();
   
   String? initialVideoId;

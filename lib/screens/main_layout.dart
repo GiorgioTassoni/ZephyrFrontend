@@ -11,6 +11,8 @@ import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/seek_bar.dart';
 import '../widgets/artist_links.dart';
+import '../widgets/favorite_button.dart';
+import '../widgets/toast.dart';
 
 // Screens
 import 'home_screen.dart';
@@ -65,7 +67,7 @@ class MainLayout extends ConsumerWidget {
         currentScreenWidget = ArtistDetailScreen(channelId: navState.currentScreen.id!);
         break;
       case ScreenType.playlist:
-        currentScreenWidget = PlaylistDetailScreen(playlistId: navState.currentScreen.intId!);
+        currentScreenWidget = PlaylistDetailScreen(playlistId: navState.currentScreen.id ?? navState.currentScreen.intId!);
         break;
       case ScreenType.admin:
         currentScreenWidget = const AdminScreen();
@@ -257,7 +259,7 @@ class MainLayout extends ConsumerWidget {
                     itemBuilder: (context, index) {
                       final playlist = libraryState.playlists[index];
                       final isSelected = navState.currentScreen.type == ScreenType.playlist &&
-                          navState.currentScreen.intId == playlist.id;
+                          (navState.currentScreen.intId == playlist.id || navState.currentScreen.id == playlist.id.toString());
                       return Material(
                         type: MaterialType.transparency,
                         child: ListTile(
@@ -274,7 +276,11 @@ class MainLayout extends ConsumerWidget {
                             ),
                           ),
                           onTap: () {
-                            navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, intId: playlist.id));
+                            navNotifier.navigateTo(ScreenState(
+                              type: ScreenType.playlist,
+                              id: playlist.id.toString(),
+                              intId: playlist.id is int ? playlist.id as int : int.tryParse(playlist.id.toString()),
+                            ));
                           },
                         ),
                       );
@@ -482,8 +488,9 @@ class MainLayout extends ConsumerWidget {
     }
 
     final track = state.currentTrack!;
+    ref.watch(libraryProvider);
     final libraryNotifier = ref.read(libraryProvider.notifier);
-    final isFav = libraryNotifier.isFavorite(track.videoId);
+    final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title);
     final navState = ref.watch(navigationProvider);
     final navNotifier = ref.read(navigationProvider.notifier);
 
@@ -495,12 +502,33 @@ class MainLayout extends ConsumerWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           // Left: Cover + Metadata + Like Button
-          SizedBox(
-            width: 240,
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 340),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: Row(
+                InkWell(
+                  onTap: () {
+                    if (navState.currentScreen.type == ScreenType.lyrics) {
+                      navNotifier.navigateBack();
+                    } else {
+                      navNotifier.navigateTo(const ScreenState(type: ScreenType.lyrics));
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: CoverImage(
+                    videoId: track.videoId,
+                    coverUrl: track.coverUrl,
+                    size: 56,
+                    borderRadius: 6,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       InkWell(
                         onTap: () {
@@ -510,60 +538,33 @@ class MainLayout extends ConsumerWidget {
                             navNotifier.navigateTo(const ScreenState(type: ScreenType.lyrics));
                           }
                         },
-                        borderRadius: BorderRadius.circular(6),
-                        child: CoverImage(
-                          videoId: track.videoId,
-                          coverUrl: track.coverUrl,
-                          size: 56,
-                          borderRadius: 6,
+                        child: Text(
+                          track.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: ZephyrColors.text,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            InkWell(
-                              onTap: () {
-                                if (navState.currentScreen.type == ScreenType.lyrics) {
-                                  navNotifier.navigateBack();
-                                } else {
-                                  navNotifier.navigateTo(const ScreenState(type: ScreenType.lyrics));
-                                }
-                              },
-                              child: Text(
-                                track.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: ZephyrColors.text,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            ArtistLinks(
-                              track: track,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: ZephyrColors.textDim,
-                              ),
-                            ),
-                          ],
+                      const SizedBox(height: 2),
+                      ArtistLinks(
+                        track: track,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: ZephyrColors.textDim,
                         ),
                       ),
                     ],
                   ),
                 ),
-                IconButton(
-                  icon: Icon(
-                    isFav ? Icons.favorite : Icons.favorite_border,
-                    color: isFav ? ZephyrColors.primary : ZephyrColors.textDim,
-                    size: 20,
-                  ),
-                  onPressed: () => libraryNotifier.toggleFavorite(track),
+                const SizedBox(width: 10),
+                FavoriteButton(
+                  isFavorite: isFav,
+                  size: 20,
+                  onTap: () => libraryNotifier.toggleFavorite(track),
                 ),
               ],
             ),
@@ -750,12 +751,7 @@ class MainLayout extends ConsumerWidget {
                               });
                             }
                           } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Error picking cover: $e'),
-                                backgroundColor: ZephyrColors.error,
-                              ),
-                            );
+                            ZephyrToast.show(context, 'Error picking cover: $e', isError: true);
                           }
                         },
                         child: MouseRegion(

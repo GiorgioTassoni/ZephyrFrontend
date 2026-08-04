@@ -84,9 +84,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
     try {
       final tracks = await _api.getDownloadedTracks();
       final playlists = await _api.getPlaylists();
-      // Favorites are NOT fetched here — they are loaded on-demand when the
-      // user opens the Favorites tab via loadFavorites().
-      final favorites = state.favorites; // keep existing stale list for isFavorite()
+      List<Track> favorites = state.favorites;
+      try {
+        favorites = await _api.getFavorites(offset: 0);
+      } catch (_) {}
       final history = await _api.getHistory();
 
       // Enrich history entries with track metadata
@@ -220,8 +221,32 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   // --- Favorites ---
 
-  bool isFavorite(String videoId) {
-    return state.favorites.any((t) => t.videoId == videoId);
+  static String _cleanTitle(String t) {
+    return t
+        .toLowerCase()
+        .replaceAll(RegExp(r'\s*[\(\[\{].*?[\)\]\}]'), '')
+        .replaceAll(RegExp(r'\s*-\s*.*$'), '')
+        .trim();
+  }
+
+  bool isFavorite(String videoId, {String? title}) {
+    if (videoId.trim().isEmpty) return false;
+    final targetRaw = videoId.trim();
+    final targetClean = targetRaw.replaceAll('dz_', '');
+    final targetTitleClean = title != null && title.trim().isNotEmpty ? _cleanTitle(title) : null;
+
+    return state.favorites.any((t) {
+      final tVideoId = t.videoId.trim();
+      if (tVideoId == targetRaw) return true;
+      final tVideoIdClean = tVideoId.replaceAll('dz_', '');
+      if (targetClean.isNotEmpty && tVideoIdClean == targetClean) return true;
+
+      if (targetTitleClean != null && targetTitleClean.isNotEmpty) {
+        final tTitleClean = _cleanTitle(t.title);
+        if (tTitleClean.isNotEmpty && tTitleClean == targetTitleClean) return true;
+      }
+      return false;
+    });
   }
 
   /// Resets pagination and fetches the first page of favorites (offset=0).
@@ -273,13 +298,21 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   Future<void> toggleFavorite(Track track) async {
     final videoId = track.videoId;
-    final isFav = isFavorite(videoId);
+    final isFav = isFavorite(videoId, title: track.title);
 
     // Optimistic UI update — insert at index 0 so newly-added tracks appear
     // at the top of the list (matching server order: newest first).
     final currentFavorites = List<Track>.from(state.favorites);
     if (isFav) {
-      currentFavorites.removeWhere((t) => t.videoId == videoId);
+      final targetCleanId = videoId.replaceAll('dz_', '').trim();
+      final targetCleanTitle = _cleanTitle(track.title);
+      currentFavorites.removeWhere((t) {
+        if (t.videoId == videoId) return true;
+        final tCleanId = t.videoId.replaceAll('dz_', '').trim();
+        if (targetCleanId.isNotEmpty && tCleanId == targetCleanId) return true;
+        if (targetCleanTitle.isNotEmpty && _cleanTitle(t.title) == targetCleanTitle) return true;
+        return false;
+      });
     } else {
       currentFavorites.insert(0, track);
     }
@@ -317,7 +350,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
-  Future<void> updatePlaylist(int id,
+  Future<void> updatePlaylist(dynamic id,
       {String? name, String? description, bool? isPublic}) async {
     try {
       await _api.updatePlaylist(id,
@@ -328,7 +361,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
-  Future<void> deletePlaylist(int id) async {
+  Future<void> deletePlaylist(dynamic id) async {
     try {
       await _api.deletePlaylist(id);
       await loadLibrary();
@@ -337,7 +370,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
-  Future<void> uploadPlaylistCover(int id, File imageFile) async {
+  Future<void> uploadPlaylistCover(dynamic id, File imageFile) async {
     try {
       await _api.uploadPlaylistCover(id, imageFile);
       await loadLibrary();
@@ -347,9 +380,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
-  Future<void> addTrackToPlaylist(int playlistId, Track track) async {
+  Future<void> addTrackToPlaylist(dynamic playlistId, Track track) async {
     try {
-      await _api.addTrackToPlaylist(playlistId, track.videoId);
+      final pId = (playlistId is int) ? playlistId : (int.tryParse(playlistId.toString()) ?? 0);
+      await _api.addTrackToPlaylist(pId, track.videoId);
       await loadLibrary();
     } catch (e) {
       final errStr = e.toString().toLowerCase();
@@ -365,9 +399,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
-  Future<void> removeTrackFromPlaylist(int playlistId, String trackId) async {
+  Future<void> removeTrackFromPlaylist(dynamic playlistId, String trackId) async {
     try {
-      await _api.removeTrackFromPlaylist(playlistId, trackId);
+      final pId = (playlistId is int) ? playlistId : (int.tryParse(playlistId.toString()) ?? 0);
+      await _api.removeTrackFromPlaylist(pId, trackId);
       await loadLibrary();
     } catch (e) {
       state = state.copyWith(errorMessage: 'Failed to remove track: $e');
@@ -375,12 +410,13 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   Future<void> reorderPlaylistTracks(
-      int playlistId, List<String> newOrder) async {
+      dynamic playlistId, List<String> newOrder) async {
     try {
-      await _api.reorderPlaylistTracks(playlistId, newOrder);
+      final pId = (playlistId is int) ? playlistId : (int.tryParse(playlistId.toString()) ?? 0);
+      await _api.reorderPlaylistTracks(pId, newOrder);
       // Update playlist tracks in state locally
       final updatedPlaylists = state.playlists.map((p) {
-        if (p.id == playlistId) {
+        if (p.id.toString() == playlistId.toString()) {
           final tracks = List<Track>.from(p.tracks ?? []);
           final reorderedTracks = <Track>[];
           for (final id in newOrder) {

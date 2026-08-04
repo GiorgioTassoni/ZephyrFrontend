@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../providers/navigation_provider.dart';
+import '../providers/library_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/album_card.dart';
 import '../widgets/track_tile.dart';
@@ -52,6 +53,7 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(libraryProvider);
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator(color: ZephyrColors.primary));
     }
@@ -147,18 +149,30 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                         const SizedBox(height: 12),
                         Row(
                           children: [
-                            if (_artist!.monthlyListeners != null) ...[
+                            if (_artist!.fans != null) ...[
+                              Text(
+                                '${_artist!.fans} fans',
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(width: 16),
+                            ] else if (_artist!.monthlyListeners != null) ...[
                               Text(
                                 '${_artist!.monthlyListeners} monthly listeners',
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
                               ),
                               const SizedBox(width: 16),
                             ],
-                            if (_artist!.subscribers != null)
+                            if (_artist!.albumCount != null) ...[
+                              Text(
+                                '${_artist!.albumCount} albums',
+                                style: const TextStyle(color: ZephyrColors.textDim),
+                              ),
+                            ] else if (_artist!.subscribers != null) ...[
                               Text(
                                 '${_artist!.subscribers} subscribers',
                                 style: const TextStyle(color: ZephyrColors.textDim),
                               ),
+                            ],
                           ],
                         ),
                       ],

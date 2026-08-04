@@ -276,9 +276,10 @@ class ZephyrApi {
     return '$_baseUrl/api/tracks/cover/$videoId';
   }
 
-  Future<Map<String, dynamic>> queueDownload(String videoId) async {
+  Future<Map<String, dynamic>> queueDownload(String trackId) async {
+    final formattedId = RegExp(r'^\d+$').hasMatch(trackId) ? 'dz_$trackId' : trackId;
     try {
-      final response = await _dio.post('/api/tracks/download/$videoId');
+      final response = await _dio.post('/api/tracks/download/$formattedId');
       return response.data;
     } on DioException catch (e) {
       throw _handleDioError(e);
@@ -325,8 +326,9 @@ class ZephyrApi {
   // --- Albums & Artists ---
 
   Future<Album> getAlbumDetail(String browseId, {bool refresh = false}) async {
+    final formattedId = RegExp(r'^\d+$').hasMatch(browseId) ? 'dz_$browseId' : browseId;
     try {
-      final response = await _dio.get('/api/albums/$browseId', queryParameters: {
+      final response = await _dio.get('/api/albums/$formattedId', queryParameters: {
         'refresh': refresh.toString(),
       });
       return Album.fromJson(response.data);
@@ -336,8 +338,9 @@ class ZephyrApi {
   }
 
   Future<Artist> getArtistDetail(String channelId) async {
+    final formattedId = RegExp(r'^\d+$').hasMatch(channelId) ? 'dz_$channelId' : channelId;
     try {
-      final response = await _dio.get('/api/artists/$channelId');
+      final response = await _dio.get('/api/artists/$formattedId');
       return Artist.fromJson(response.data);
     } on DioException catch (e) {
       throw _handleDioError(e);
@@ -345,8 +348,9 @@ class ZephyrApi {
   }
 
   Future<Map<String, dynamic>> downloadAlbum(String browseId) async {
+    final formattedId = RegExp(r'^\d+$').hasMatch(browseId) ? 'dz_$browseId' : browseId;
     try {
-      final response = await _dio.post('/api/albums/download/$browseId');
+      final response = await _dio.post('/api/albums/download/$formattedId');
       return response.data;
     } on DioException catch (e) {
       throw _handleDioError(e);
@@ -366,8 +370,9 @@ class ZephyrApi {
   }
 
   Future<bool> isFavorite(String trackId) async {
+    final formattedId = RegExp(r'^\d+$').hasMatch(trackId) ? 'dz_$trackId' : trackId;
     try {
-      final response = await _dio.get('/api/favorites/$trackId');
+      final response = await _dio.get('/api/favorites/$formattedId');
       return response.data['is_favorite'] ?? false;
     } on DioException catch (e) {
       // If it fails, return false
@@ -376,16 +381,18 @@ class ZephyrApi {
   }
 
   Future<void> addFavorite(String trackId) async {
+    final formattedId = RegExp(r'^\d+$').hasMatch(trackId) ? 'dz_$trackId' : trackId;
     try {
-      await _dio.post('/api/favorites/$trackId');
+      await _dio.post('/api/favorites/$formattedId');
     } on DioException catch (e) {
       throw _handleDioError(e);
     }
   }
 
   Future<void> removeFavorite(String trackId) async {
+    final formattedId = RegExp(r'^\d+$').hasMatch(trackId) ? 'dz_$trackId' : trackId;
     try {
-      await _dio.delete('/api/favorites/$trackId');
+      await _dio.delete('/api/favorites/$formattedId');
     } on DioException catch (e) {
       throw _handleDioError(e);
     }
@@ -403,9 +410,11 @@ class ZephyrApi {
     }
   }
 
-  Future<Playlist> getPlaylistDetail(int id) async {
+  Future<Playlist> getPlaylistDetail(dynamic id) async {
+    final idStr = id.toString();
+    final formattedId = (RegExp(r'^\d+$').hasMatch(idStr) && !idStr.startsWith('dz_')) ? idStr : idStr;
     try {
-      final response = await _dio.get('/api/playlists/$id');
+      final response = await _dio.get('/api/playlists/$formattedId');
       return Playlist.fromJson(response.data);
     } on DioException catch (e) {
       throw _handleDioError(e);
@@ -432,7 +441,7 @@ class ZephyrApi {
     }
   }
 
-  Future<void> updatePlaylist(int id, {String? name, String? description, bool? isPublic}) async {
+  Future<void> updatePlaylist(dynamic id, {String? name, String? description, bool? isPublic}) async {
     try {
       final data = <String, dynamic>{};
       if (name != null) data['name'] = name;
@@ -445,7 +454,7 @@ class ZephyrApi {
     }
   }
 
-  Future<void> deletePlaylist(int id) async {
+  Future<void> deletePlaylist(dynamic id) async {
     try {
       await _dio.delete('/api/playlists/$id');
     } on DioException catch (e) {
@@ -453,7 +462,7 @@ class ZephyrApi {
     }
   }
 
-  Future<String> uploadPlaylistCover(int id, File imageFile) async {
+  Future<String> uploadPlaylistCover(dynamic id, File imageFile) async {
     try {
       final formData = FormData.fromMap({
         'file': await MultipartFile.fromFile(
@@ -472,7 +481,7 @@ class ZephyrApi {
     }
   }
 
-  String getPlaylistCoverUrl(int id) {
+  String getPlaylistCoverUrl(dynamic id) {
     // Token is sent via Authorization header; never embed in URL (S-03).
     return '$_baseUrl/api/playlists/$id/cover';
   }

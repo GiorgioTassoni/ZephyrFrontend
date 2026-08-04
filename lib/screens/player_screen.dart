@@ -13,6 +13,7 @@ import '../widgets/seek_bar.dart';
 import '../widgets/artist_links.dart';
 import '../widgets/toast.dart';
 import '../widgets/share_dialog.dart';
+import '../widgets/favorite_button.dart';
 
 // Model for LRC line parsing
 class LrcLine {
@@ -242,33 +243,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
         return;
       }
 
-      // 2. Search YTMusic remotely for album (remote: true)
-      if (track.album != null && track.album!.isNotEmpty) {
-        try {
-          final query = '${track.album} ${track.artists.isNotEmpty ? track.artists.first : ''}'.trim();
-          final searchRes = await _api.search(query, remote: true);
-          final results = searchRes['results'];
-          List<dynamic> albums = [];
-          if (results is Map && results.containsKey('albums')) {
-            albums = (results['albums'] as List?) ?? [];
-          } else if (searchRes['albums'] is List) {
-            albums = searchRes['albums'] as List;
-          }
+      // 2. Search Deezer remotely for album
+      final albumQuery = (track.album != null && track.album!.isNotEmpty)
+          ? '${track.album} ${track.artists.isNotEmpty ? track.artists.first : ''}'.trim()
+          : '${track.title} ${track.artists.isNotEmpty ? track.artists.first : ''}'.trim();
 
-          if (albums.isNotEmpty) {
-            final firstAlbum = albums.first;
-            final id = (firstAlbum['id'] ?? firstAlbum['browse_id'] ?? firstAlbum['browseId'])?.toString();
-            if (id != null && id.isNotEmpty) {
-              navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: id));
-              return;
-            }
-          }
-        } catch (_) {}
+      try {
+        final searchRes = await _api.search(albumQuery, remote: true);
+        final results = searchRes['results'];
+        List<dynamic> albums = [];
+        if (results is Map && results.containsKey('albums')) {
+          albums = (results['albums'] as List?) ?? [];
+        } else if (searchRes['albums'] is List) {
+          albums = searchRes['albums'] as List;
+        }
 
-        ZephyrToast.show(context, 'Could not find album page for "${track.album}"');
-      } else {
-        ZephyrToast.show(context, 'No album information available for this track');
-      }
+        if (albums.isNotEmpty) {
+          final firstAlbum = albums.first;
+          final id = (firstAlbum['id'] ?? firstAlbum['browse_id'] ?? firstAlbum['browseId'])?.toString();
+          if (id != null && id.isNotEmpty) {
+            final formattedId = id.startsWith('dz_') ? id : 'dz_$id';
+            navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: formattedId));
+            return;
+          }
+        }
+      } catch (_) {}
+
+      ZephyrToast.show(context, 'Could not find album page');
     } else if (value.startsWith('go_to_artist_')) {
       final indexStr = value.substring('go_to_artist_'.length);
       final index = int.tryParse(indexStr) ?? 0;
@@ -328,6 +329,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
   Widget build(BuildContext context) {
     final playerState = ref.watch(playerProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
+    final libraryState = ref.watch(libraryProvider);
     final libraryNotifier = ref.read(libraryProvider.notifier);
 
     if (playerState.currentTrack == null) {
@@ -369,7 +371,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     // Auto update lyrics highlighted line based on player position
     _updateLyricsScrolling(playerState.position);
 
-    final isFav = libraryNotifier.isFavorite(track.videoId);
+    final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title);
 
     if (widget.isInline) {
       return Container(
@@ -450,14 +452,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                           ),
                         ),
                         const SizedBox(width: 8),
-                        IconButton(
-                          icon: Icon(
-                            isFav ? Icons.favorite : Icons.favorite_border,
-                            color: isFav ? ZephyrColors.primary : ZephyrColors.textDim,
-                            size: 24,
-                          ),
-                          onPressed: () => libraryNotifier.toggleFavorite(track),
+                        FavoriteButton(
+                          isFavorite: isFav,
+                          size: 24,
+                          onTap: () => libraryNotifier.toggleFavorite(track),
                         ),
+                        const SizedBox(width: 8),
                         PopupMenuButton<String>(
                           icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim, size: 24),
                           color: ZephyrColors.bgCard,
@@ -465,17 +465,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                           itemBuilder: (context) {
                             final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
                             return [
-                              if (track.album != null && track.album!.isNotEmpty)
-                                const PopupMenuItem(
-                                  value: 'go_to_album',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
-                                      SizedBox(width: 10),
-                                      Text('Go to album'),
-                                    ],
-                                  ),
+                              const PopupMenuItem(
+                                value: 'go_to_album',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
+                                    SizedBox(width: 10),
+                                    Text('Go to album'),
+                                  ],
                                 ),
+                              ),
                               for (int i = 0; i < validArtists.length; i++)
                                 PopupMenuItem(
                                   value: 'go_to_artist_$i',
@@ -592,13 +591,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                           ],
                         ),
                       ),
-                      IconButton(
-                        icon: Icon(
-                          isFav ? Icons.favorite : Icons.favorite_border,
-                          color: isFav ? ZephyrColors.primary : ZephyrColors.textDim,
-                          size: 28,
-                        ),
-                        onPressed: () => libraryNotifier.toggleFavorite(track),
+                      FavoriteButton(
+                        isFavorite: isFav,
+                        size: 28,
+                        onTap: () => libraryNotifier.toggleFavorite(track),
                       ),
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim, size: 28),
@@ -607,17 +603,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                         itemBuilder: (context) {
                           final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
                           return [
-                            if (track.album != null && track.album!.isNotEmpty)
-                              const PopupMenuItem(
-                                value: 'go_to_album',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
-                                    SizedBox(width: 10),
-                                    Text('Go to album'),
-                                  ],
-                                ),
+                            const PopupMenuItem(
+                              value: 'go_to_album',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
+                                  SizedBox(width: 10),
+                                  Text('Go to album'),
+                                ],
                               ),
+                            ),
                             for (int i = 0; i < validArtists.length; i++)
                               PopupMenuItem(
                                 value: 'go_to_artist_$i',

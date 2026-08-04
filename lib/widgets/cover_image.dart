@@ -10,7 +10,7 @@ import '../providers/library_provider.dart';
 class CoverImage extends ConsumerWidget {
   final String? videoId;
   final String? coverUrl;
-  final int? playlistId;
+  final dynamic playlistId;
   final String? updatedAt;
   final bool? isDownloaded;
   final double size;
@@ -53,7 +53,7 @@ class CoverImage extends ConsumerWidget {
       if (cleanUpdatedAt == null) {
         try {
           final playlist = libraryState.playlists.firstWhere(
-            (p) => p.id == playlistId,
+            (p) => p.id.toString() == playlistId.toString(),
           );
           cleanUpdatedAt = playlist.updatedAt;
         } catch (_) {}
@@ -83,40 +83,15 @@ class CoverImage extends ConsumerWidget {
       );
     }
 
-    // 2. Track Cover Image
-    if (videoId != null) {
-      // For online/non-downloaded tracks, load coverUrl directly from Google CDN for fast UX
-      if (isDownloaded == false && coverUrl != null && coverUrl!.isNotEmpty) {
-        return _buildNetworkImage(coverUrl!, size, placeholder, token);
-      }
-
-      String url = api.getCoverUrl(videoId!);
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(borderRadius),
-        child: CachedNetworkImage(
-          imageUrl: url,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          httpHeaders: {
-            'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            if (token != null) 'Authorization': 'Bearer $token',
-          },
-          placeholder: (context, url) => placeholder,
-          errorWidget: (context, url, error) {
-            if (coverUrl != null && coverUrl!.isNotEmpty) {
-              return _buildNetworkImage(coverUrl!, size, placeholder, token);
-            }
-            return placeholder;
-          },
-        ),
-      );
-    }
-
-    // 3. YouTube/Network Cover Image
+    // 2. Direct Network Cover Image or Server Cover Path
     if (coverUrl != null && coverUrl!.isNotEmpty) {
       return _buildNetworkImage(coverUrl!, size, placeholder, token);
+    }
+
+    // 3. Track Cover Image Endpoint (using canonical track ID)
+    if (videoId != null && videoId!.isNotEmpty) {
+      String url = api.getCoverUrl(videoId!);
+      return _buildNetworkImage(url, size, placeholder, token);
     }
 
     return placeholder;

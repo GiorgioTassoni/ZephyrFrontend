@@ -10,9 +10,10 @@ import '../providers/player_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/track_tile.dart';
+import '../widgets/toast.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
-  final int playlistId;
+  final dynamic playlistId;
 
   const PlaylistDetailScreen({super.key, required this.playlistId});
 
@@ -56,6 +57,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
   Future<void> _pickAndUploadCover() async {
     if (_playlist == null) return;
+    if (_playlist!.id.toString().startsWith('dz_')) return;
     try {
       final result = await FilePicker.pickFiles(
         type: FileType.image,
@@ -71,9 +73,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         await _fetchPlaylistDetails();
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to upload cover: $e'), backgroundColor: ZephyrColors.error),
-      );
+      ZephyrToast.show(context, 'Failed to upload cover: $e', isError: true);
       setState(() {
         _isLoading = false;
       });
@@ -81,7 +81,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   void _showEditDetailsDialog() {
-    if (_playlist == null) return;
+    if (_playlist == null || _playlist!.id.toString().startsWith('dz_')) return;
     final nameController = TextEditingController(text: _playlist!.name);
     final descController = TextEditingController(text: _playlist!.description);
     bool isPublic = _playlist!.isPublic;
@@ -151,7 +151,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   void _deletePlaylist() {
-    if (_playlist == null) return;
+    if (_playlist == null || _playlist!.id.toString().startsWith('dz_')) return;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -178,17 +178,13 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   Future<void> _removeTrack(String trackId) async {
-    if (_playlist == null) return;
+    if (_playlist == null || _playlist!.id.toString().startsWith('dz_')) return;
     try {
       await ref.read(libraryProvider.notifier).removeTrackFromPlaylist(_playlist!.id, trackId);
       await _fetchPlaylistDetails();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Song removed from playlist')),
-      );
+      ZephyrToast.show(context, 'Song removed from playlist');
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to remove: $e'), backgroundColor: ZephyrColors.error),
-      );
+      ZephyrToast.show(context, 'Failed to remove: $e', isError: true);
     }
   }
 
@@ -220,6 +216,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     }
 
     final tracks = _playlist!.tracks ?? [];
+    final isRemote = _playlist!.id.toString().startsWith('dz_');
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
@@ -238,21 +235,22 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   GestureDetector(
-                    onTap: _pickAndUploadCover,
+                    onTap: isRemote ? null : _pickAndUploadCover,
                     child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      onEnter: (_) => setState(() => _isCoverHovered = true),
+                      cursor: isRemote ? SystemMouseCursors.basic : SystemMouseCursors.click,
+                      onEnter: (_) => setState(() => _isCoverHovered = !isRemote),
                       onExit: (_) => setState(() => _isCoverHovered = false),
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
                           CoverImage(
-                            playlistId: _playlist!.id,
+                            coverUrl: _playlist!.coverUrl,
+                            playlistId: isRemote ? null : _playlist!.id,
                             updatedAt: _playlist!.updatedAt,
                             size: 200,
                             borderRadius: 12,
                           ),
-                          if (_isCoverHovered)
+                          if (_isCoverHovered && !isRemote)
                             Container(
                               width: 200,
                               height: 200,
@@ -275,9 +273,9 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'PLAYLIST',
-                          style: TextStyle(
+                        Text(
+                          isRemote ? 'DEEZER PLAYLIST' : 'PLAYLIST',
+                          style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 1.2,
@@ -296,7 +294,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          _playlist!.description ?? 'No description',
+                          _playlist!.description ?? (_playlist!.ownerName != null ? 'By ${_playlist!.ownerName}' : 'No description'),
                           style: const TextStyle(
                             fontSize: 16,
                             color: ZephyrColors.textDim,
@@ -312,16 +310,25 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              _playlist!.isPublic ? 'Public Playlist' : 'Private Playlist',
+                              isRemote ? 'Deezer Browse' : (_playlist!.isPublic ? 'Public Playlist' : 'Private Playlist'),
                               style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                             ),
                             const SizedBox(width: 12),
                             const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
                             const SizedBox(width: 12),
                             Text(
-                              '${tracks.length} songs',
+                              '${_playlist!.trackCount ?? tracks.length} songs',
                               style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                             ),
+                            if (_playlist!.downloadedCount != null && _playlist!.downloadedCount! > 0) ...[
+                              const SizedBox(width: 12),
+                              const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                              const SizedBox(width: 12),
+                              Text(
+                                '${_playlist!.downloadedCount} downloaded',
+                                style: const TextStyle(color: ZephyrColors.success, fontSize: 13, fontWeight: FontWeight.w600),
+                              ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 20),
@@ -340,39 +347,41 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                               icon: const Icon(Icons.play_arrow),
                               label: const Text('Play'),
                             ),
-                            const SizedBox(width: 12),
-                            OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: ZephyrColors.text,
-                                side: const BorderSide(color: ZephyrColors.bgLight),
+                            if (!isRemote) ...[
+                              const SizedBox(width: 12),
+                              OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: ZephyrColors.text,
+                                  side: const BorderSide(color: ZephyrColors.bgLight),
+                                ),
+                                onPressed: _showEditDetailsDialog,
+                                icon: const Icon(Icons.edit, size: 16),
+                                label: const Text('Edit Info'),
                               ),
-                              onPressed: _showEditDetailsDialog,
-                              icon: const Icon(Icons.edit, size: 16),
-                              label: const Text('Edit Info'),
-                            ),
-                            const SizedBox(width: 12),
-                            OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: ZephyrColors.text,
-                                side: const BorderSide(color: ZephyrColors.bgLight),
+                              const SizedBox(width: 12),
+                              OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: ZephyrColors.text,
+                                  side: const BorderSide(color: ZephyrColors.bgLight),
+                                ),
+                                onPressed: () {
+                                  setState(() {
+                                    _isReorderingMode = !_isReorderingMode;
+                                  });
+                                },
+                                icon: Icon(
+                                  _isReorderingMode ? Icons.check : Icons.swap_vert,
+                                  size: 16,
+                                ),
+                                label: Text(_isReorderingMode ? 'Done Reordering' : 'Reorder Songs'),
                               ),
-                              onPressed: () {
-                                setState(() {
-                                  _isReorderingMode = !_isReorderingMode;
-                                });
-                              },
-                              icon: Icon(
-                                _isReorderingMode ? Icons.check : Icons.swap_vert,
-                                size: 16,
+                              const SizedBox(width: 12),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: ZephyrColors.error),
+                                onPressed: _deletePlaylist,
+                                tooltip: 'Delete Playlist',
                               ),
-                              label: Text(_isReorderingMode ? 'Done Reordering' : 'Reorder Songs'),
-                            ),
-                            const SizedBox(width: 12),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, color: ZephyrColors.error),
-                              onPressed: _deletePlaylist,
-                              tooltip: 'Delete Playlist',
-                            ),
+                            ],
                           ],
                         ),
                       ],

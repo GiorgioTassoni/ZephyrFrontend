@@ -11,18 +11,21 @@ import 'track_metadata_editor_dialog.dart';
 import 'share_dialog.dart';
 import 'cover_image.dart';
 import 'artist_links.dart';
+import 'favorite_button.dart';
 import 'toast.dart';
 
 class TrackTile extends ConsumerStatefulWidget {
   final Track track;
   final List<Track> queue;
   final VoidCallback? onRemoveFromPlaylist;
+  final Widget? trailing;
 
   const TrackTile({
     super.key,
     required this.track,
     required this.queue,
     this.onRemoveFromPlaylist,
+    this.trailing,
   });
 
   @override
@@ -34,35 +37,27 @@ class _TrackTileState extends ConsumerState<TrackTile> {
 
   @override
   Widget build(BuildContext context) {
-    final libraryNotifier = ref.read(libraryProvider.notifier);
-    final player = ref.watch(playerProvider);
+    final playerState = ref.watch(playerProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
-    final isFav = libraryNotifier.isFavorite(widget.track.videoId);
-    final isCurrent = player.currentTrack?.videoId == widget.track.videoId;
+    final libraryState = ref.watch(libraryProvider);
+    final libraryNotifier = ref.read(libraryProvider.notifier);
+    final isCurrent = playerState.currentTrack?.videoId == widget.track.videoId;
+    final isFav = libraryNotifier.isFavorite(widget.track.videoId, title: widget.track.title);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
-      cursor: SystemMouseCursors.click,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOut,
-        decoration: BoxDecoration(
-          color: _isHovered 
-              ? Colors.white.withValues(alpha: 0.06) 
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: GestureDetector(
+        onSecondaryTapDown: (details) {
+          _showRightClickMenu(context, ref, details.globalPosition);
+        },
         child: Material(
-          color: Colors.transparent,
+          color: isCurrent
+              ? ZephyrColors.bgLight.withValues(alpha: 0.5)
+              : (_isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.3) : Colors.transparent),
           borderRadius: BorderRadius.circular(8),
           clipBehavior: Clip.antiAlias,
-          child: GestureDetector(
-            onSecondaryTapDown: (details) {
-              _showRightClickMenu(context, ref, details.globalPosition);
-            },
-            child: ListTile(
+          child: ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             leading: Stack(
               alignment: Alignment.center,
@@ -70,10 +65,9 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                 CoverImage(
                   videoId: widget.track.videoId,
                   coverUrl: widget.track.coverUrl,
-                  isDownloaded: widget.track.isDownloaded,
                   size: 48,
                 ),
-                if (isCurrent)
+                if (_isHovered || isCurrent)
                   Container(
                     width: 48,
                     height: 48,
@@ -81,10 +75,19 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                       color: Colors.black.withValues(alpha: 0.5),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(
-                      Icons.volume_up,
-                      color: ZephyrColors.primary,
-                      size: 24,
+                    child: IconButton(
+                      icon: Icon(
+                        isCurrent && playerState.isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: ZephyrColors.primary,
+                        size: 24,
+                      ),
+                      onPressed: () {
+                        if (isCurrent) {
+                          playerNotifier.togglePlayPause();
+                        } else {
+                          playerNotifier.playTrack(widget.track, widget.queue);
+                        }
+                      },
                     ),
                   ),
               ],
@@ -109,13 +112,10 @@ class _TrackTileState extends ConsumerState<TrackTile> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildDownloadIndicator(context, ref),
-                IconButton(
-                  icon: Icon(
-                    isFav ? Icons.favorite : Icons.favorite_border,
-                    color: isFav ? ZephyrColors.primary : ZephyrColors.textDim,
-                    size: 20,
-                  ),
-                  onPressed: () => libraryNotifier.toggleFavorite(widget.track),
+                FavoriteButton(
+                  isFavorite: isFav,
+                  size: 20,
+                  onTap: () => libraryNotifier.toggleFavorite(widget.track),
                 ),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim),
@@ -177,9 +177,8 @@ class _TrackTileState extends ConsumerState<TrackTile> {
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildDownloadIndicator(BuildContext context, WidgetRef ref) {
     switch (widget.track.downloadStatus) {
@@ -344,6 +343,16 @@ class _TrackTileState extends ConsumerState<TrackTile> {
           ],
         ),
       ),
+      PopupMenuItem(
+        value: 'go_to_album',
+        child: Row(
+          children: [
+            Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
+            const SizedBox(width: 8),
+            Text('Go to album', style: TextStyle(color: ZephyrColors.text)),
+          ],
+        ),
+      ),
     ];
 
     if (authState.isCurator) {
@@ -394,6 +403,36 @@ class _TrackTileState extends ConsumerState<TrackTile> {
         _showAddToPlaylistDialog(context, ref);
       } else if (value == 'share_song') {
         showShareDialog(context, ref, widget.track);
+      } else if (value == 'go_to_album') {
+        final navNotifier = ref.read(navigationProvider.notifier);
+        if (widget.track.albumId != null && widget.track.albumId!.isNotEmpty) {
+          navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: widget.track.albumId!));
+        } else {
+          final query = (widget.track.album != null && widget.track.album!.isNotEmpty)
+              ? '${widget.track.album} ${widget.track.artists.isNotEmpty ? widget.track.artists.first : ''}'.trim()
+              : '${widget.track.title} ${widget.track.artists.isNotEmpty ? widget.track.artists.first : ''}'.trim();
+          ZephyrApi().search(query, remote: true).then((searchRes) {
+            final results = searchRes['results'];
+            List<dynamic> albums = [];
+            if (results is Map && results.containsKey('albums')) {
+              albums = (results['albums'] as List?) ?? [];
+            } else if (searchRes['albums'] is List) {
+              albums = searchRes['albums'] as List;
+            }
+            if (albums.isNotEmpty) {
+              final firstAlbum = albums.first;
+              final id = (firstAlbum['id'] ?? firstAlbum['browse_id'] ?? firstAlbum['browseId'])?.toString();
+              if (id != null && id.isNotEmpty) {
+                final formattedId = id.startsWith('dz_') ? id : 'dz_$id';
+                navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: formattedId));
+                return;
+              }
+            }
+            ZephyrToast.show(context, 'Could not find album page');
+          }).catchError((_) {
+            ZephyrToast.show(context, 'Could not find album page');
+          });
+        }
       } else if (value == 'edit_metadata') {
         showDialog<bool>(
           context: context,
@@ -429,19 +468,13 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                   Navigator.pop(context); // Close dialog
                   await ZephyrApi().deleteTrack(widget.track.videoId);
                   ref.read(libraryProvider.notifier).loadLibrary();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Track "${widget.track.title}" deleted successfully.'),
-                      backgroundColor: ZephyrColors.success,
-                    ),
-                  );
+                  if (context.mounted) {
+                    ZephyrToast.show(context, 'Track "${widget.track.title}" deleted successfully.');
+                  }
                 } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Failed to delete track: $e'),
-                      backgroundColor: ZephyrColors.error,
-                    ),
-                  );
+                  if (context.mounted) {
+                    ZephyrToast.show(context, 'Failed to delete track: $e', isError: true);
+                  }
                 }
               },
               child: const Text('Delete', style: TextStyle(color: Colors.white)),

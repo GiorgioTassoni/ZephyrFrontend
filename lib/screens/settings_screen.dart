@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
 import '../providers/auth_provider.dart';
 import '../theme/colors.dart';
+import '../widgets/toast.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -83,9 +84,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           final newUrl = _serverController.text.trim();
                           if (newUrl.isNotEmpty) {
                             await authNotifier.updateServerUrl(newUrl);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Server URL updated!')),
-                            );
+                            if (context.mounted) {
+                              ZephyrToast.show(context, 'Server URL updated!');
+                            }
                           }
                         },
                         child: const Text('Save'),

@@ -31,7 +31,7 @@ class ZephyrToast {
 
     overlay.insert(_currentEntry!);
     
-    _timer = Timer(const Duration(seconds: 2, milliseconds: 500), () {
+    _timer = Timer(const Duration(seconds: 2, milliseconds: 600), () {
       if (_currentEntry != null) {
         _currentEntry!.remove();
         _currentEntry = null;
@@ -59,21 +59,26 @@ class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderSta
   late AnimationController _controller;
   late Animation<double> _opacity;
   late Animation<double> _scale;
+  late Animation<Offset> _slide;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 250),
+      duration: const Duration(milliseconds: 280),
     );
     
     _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOut),
     );
     
-    _scale = Tween<double>(begin: 0.85, end: 1.0).animate(
+    _scale = Tween<double>(begin: 0.88, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+    );
+
+    _slide = Tween<Offset>(begin: const Offset(0.0, -0.4), end: Offset.zero).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
     );
 
     _controller.forward();
@@ -94,64 +99,83 @@ class _ToastWidgetState extends State<_ToastWidget> with SingleTickerProviderSta
 
   @override
   Widget build(BuildContext context) {
-    final baseColor = widget.isError ? ZephyrColors.error : const Color(0xFF1DB954);
+    final accentColor = widget.isError ? ZephyrColors.error : ZephyrColors.primary;
 
     return Positioned(
-      top: 40,
+      top: 48,
       left: 0,
       right: 0,
       child: Center(
-        child: FadeTransition(
-          opacity: _opacity,
-          child: ScaleTransition(
-            scale: _scale,
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.25),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: baseColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(
-                          color: baseColor.withValues(alpha: 0.8),
-                          width: 1.5,
-                        ),
+        child: SlideTransition(
+          position: _slide,
+          child: FadeTransition(
+            opacity: _opacity,
+            child: ScaleTransition(
+              scale: _scale,
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(28),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                        offset: const Offset(0, 8),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            widget.isError ? Icons.error_outline : Icons.check_circle_outline,
-                            color: baseColor.withValues(alpha: 0.9),
-                            size: 20,
+                      BoxShadow(
+                        color: accentColor.withValues(alpha: 0.15),
+                        blurRadius: 16,
+                        spreadRadius: 0,
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF141418).withValues(alpha: 0.72),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: accentColor.withValues(alpha: 0.5),
+                            width: 1.2,
                           ),
-                          const SizedBox(width: 10),
-                          Flexible(
-                            child: Text(
-                              widget.message,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: accentColor.withValues(alpha: 0.2),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                widget.isError ? Icons.error_outline : Icons.check_circle_outline,
+                                color: accentColor,
+                                size: 18,
                               ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 12),
+                            Flexible(
+                              child: Text(
+                                widget.message,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.1,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),

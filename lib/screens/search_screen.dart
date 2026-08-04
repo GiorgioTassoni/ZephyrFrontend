@@ -23,12 +23,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   Timer? _debounceTimer;
   bool _isLoading = false;
   bool _hasRemote = false;
+  String _remoteSource = 'none';
   String _lastQuery = '';
   
   List<Track> _tracks = [];
   List<Track> _videos = [];
   List<Album> _albums = [];
   List<Artist> _artists = [];
+  List<Playlist> _playlists = [];
   String? _errorMessage;
 
   @override
@@ -40,22 +42,27 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _onSearchChanged(String query) {
     _debounceTimer?.cancel();
-    if (query.trim().isEmpty) {
+    final cleanQuery = query.trim();
+    if (cleanQuery.length < 4) {
       setState(() {
         _tracks = [];
         _videos = [];
         _albums = [];
         _artists = [];
+        _playlists = [];
         _isLoading = false;
         _hasRemote = false;
+        _remoteSource = 'none';
         _errorMessage = null;
-        _lastQuery = '';
+        _lastQuery = cleanQuery;
       });
       return;
     }
 
-    _debounceTimer = Timer(const Duration(milliseconds: 400), () {
-      _performSearch(query.trim(), forceRemote: false);
+    if (cleanQuery == _lastQuery) return;
+
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      _performSearch(cleanQuery, forceRemote: false);
     });
   }
 
@@ -74,13 +81,19 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       final List rawVideos = results['video'] ?? [];
       final List rawAlbums = results['albums'] ?? [];
       final List rawArtists = results['artists'] ?? [];
+      final List rawPlaylists = results['playlists'] ?? [];
+
+      final remoteSrc = (res['remote_source'] ?? 'none').toString();
+      final hasRem = res['has_remote'] ?? false;
  
       setState(() {
         _tracks = rawTracks.map((e) => Track.fromJson(Map<String, dynamic>.from(e))).toList();
         _videos = rawVideos.map((e) => Track.fromJson(Map<String, dynamic>.from(e))).toList();
         _albums = rawAlbums.map((e) => Album.fromJson(Map<String, dynamic>.from(e))).toList();
         _artists = rawArtists.map((e) => Artist.fromJson(Map<String, dynamic>.from(e))).toList();
-        _hasRemote = res['has_remote'] ?? false;
+        _playlists = rawPlaylists.map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))).toList();
+        _hasRemote = hasRem;
+        _remoteSource = remoteSrc;
         _isLoading = false;
       });
     } catch (e) {
@@ -97,8 +110,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final query = ref.watch(searchQueryProvider);
 
     // Sync local query and fetch results when top bar query updates
-    if (query != _lastQuery) {
-      _lastQuery = query;
+    final cleanQuery = query.trim();
+    if (cleanQuery != _lastQuery) {
       _searchController.text = query;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -152,7 +165,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ),
           SizedBox(height: 8),
           Text(
-            'Results are searched locally first, falling back to YouTube Music.',
+            'Results are searched locally first, falling back to Deezer discovery.',
             style: TextStyle(
               fontSize: 14,
               color: ZephyrColors.textDim,
@@ -164,20 +177,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Widget _buildSearchResults(NavigationNotifier navNotifier) {
-    if (_tracks.isEmpty && _videos.isEmpty && _albums.isEmpty && _artists.isEmpty) {
+    if (_tracks.isEmpty && _videos.isEmpty && _albums.isEmpty && _artists.isEmpty && _playlists.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Text(
-              'No local results found.',
+              'No results found.',
               style: TextStyle(color: ZephyrColors.textDim, fontSize: 16),
             ),
             const SizedBox(height: 16),
-            if (_hasRemote)
+            if (_remoteSource == 'none')
               ElevatedButton.icon(
                 icon: const Icon(Icons.cloud_download, color: Colors.black),
-                label: const Text('Search on YouTube Music', style: TextStyle(color: Colors.black)),
+                label: const Text('Search on Deezer', style: TextStyle(color: Colors.black)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: ZephyrColors.primary,
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -189,11 +202,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       );
     }
 
+    // Only show prompt banner if remote discovery was NOT executed yet and local-only results exist
+    final showOnlinePrompt = _remoteSource == 'none' && _hasRemote;
+
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 32),
       children: [
-        // YouTube music banner (if local search yields matches, but remote isn't triggered yet)
-        if (_hasRemote) ...[
+        if (showOnlinePrompt) ...[
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -209,12 +224,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Discovery YouTube Music',
+                        'Deezer Discovery',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                       ),
                       SizedBox(height: 2),
                       Text(
-                        'Matches were found in your local library. Click here to fetch additional tracks online.',
+                        'Matches were found in your local library. Click here to fetch additional tracks online via Deezer.',
                         style: TextStyle(fontSize: 12, color: ZephyrColors.textDim),
                       ),
                     ],
@@ -362,6 +377,43 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           ],
                         ),
                       ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+
+        // Playlists Section
+        if (_playlists.isNotEmpty) ...[
+          const Text(
+            'Playlists',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 140,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _playlists.length,
+              itemBuilder: (context, index) {
+                final playlist = _playlists[index];
+                return Container(
+                  width: 320,
+                  margin: const EdgeInsets.only(right: 16),
+                  child: Material(
+                    color: ZephyrColors.bgCard,
+                    borderRadius: BorderRadius.circular(8),
+                    clipBehavior: Clip.antiAlias,
+                    child: ListTile(
+                      leading: CoverImage(coverUrl: playlist.coverUrl, playlistId: playlist.id, size: 50),
+                      title: Text(playlist.name, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(playlist.ownerName ?? 'Deezer', overflow: TextOverflow.ellipsis),
+                      onTap: () {
+                        navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, id: playlist.id.toString()));
+                      },
                     ),
                   ),
                 );

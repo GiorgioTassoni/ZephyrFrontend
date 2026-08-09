@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../providers/library_provider.dart';
-import '../providers/player_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/track_tile.dart';
@@ -81,19 +80,24 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   Future<void> _downloadAllTracks() async {
     if (_album == null) return;
     try {
-      final response = await _api.downloadAlbum(widget.browseId);
-      final queued = response['queued_for_download'] ?? 0;
-      final avail = response['already_downloaded'] ?? 0;
-      ZephyrToast.show(
-        context,
-        'Album download started: $queued queued, $avail already available.',
-      );
-      // Reload library to update download states
-      ref.read(libraryProvider.notifier).loadLibrary();
-      // Re-fetch album status
-      _fetchAlbumDetails(bypassCache: false);
+      final summary = await _api.downloadAlbum(widget.browseId);
+      String msg = 'Album download status: ${summary.queuedForDownload} queued, ${summary.alreadyDownloaded} available';
+      if (summary.needsResolution > 0) {
+        msg += ', ${summary.needsResolution} need selection';
+      }
+      if (summary.unavailable > 0) {
+        msg += ', ${summary.unavailable} unavailable';
+      }
+
+      if (mounted) {
+        ZephyrToast.show(context, msg, isError: summary.needsResolution > 0);
+        ref.read(libraryProvider.notifier).loadLibrary();
+        _fetchAlbumDetails(bypassCache: false);
+      }
     } catch (e) {
-      ZephyrToast.show(context, 'Failed to download album: $e', isError: true);
+      if (mounted) {
+        ZephyrToast.show(context, 'Failed to download album: $e', isError: true);
+      }
     }
   }
 

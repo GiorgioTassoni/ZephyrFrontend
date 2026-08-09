@@ -7,6 +7,7 @@ import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../providers/library_provider.dart';
 import '../theme/colors.dart';
+import '../widgets/resolution_candidate_modal.dart';
 
 class ImportScreen extends ConsumerStatefulWidget {
   const ImportScreen({super.key});
@@ -236,8 +237,102 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                     ),
                     const SizedBox(height: 24),
 
+                    // Review Items (Needs Resolution) list
+                    if (status.reviewItems.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      Text(
+                        'Needs Resolution (${status.reviewItems.length})',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amberAccent,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'The following tracks require candidate selection to ensure the exact match.',
+                        style: TextStyle(color: ZephyrColors.textDim, fontSize: 12),
+                      ),
+                      const SizedBox(height: 12),
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: status.reviewItems.length,
+                        separatorBuilder: (context, index) => const Divider(color: ZephyrColors.bgLight, height: 1),
+                        itemBuilder: (context, index) {
+                          final item = status.reviewItems[index];
+                          final resId = (item['id'] ?? '').toString();
+                          final trackId = (item['track_id'] ?? '').toString();
+                          final title = (item['source_title'] ?? 'Unknown Track').toString();
+                          final artistsList = item['source_artists'] is List
+                              ? (item['source_artists'] as List).map((e) => e.toString()).toList()
+                              : <String>[];
+                          final candidatesList = item['candidates'] is List
+                              ? (item['candidates'] as List)
+                                  .map((c) => ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)))
+                                  .toList()
+                              : <ResolutionCandidate>[];
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        title,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (artistsList.isNotEmpty)
+                                        Text(
+                                          artistsList.join(', '),
+                                          style: const TextStyle(color: ZephyrColors.textDim, fontSize: 12),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.amberAccent,
+                                    foregroundColor: Colors.black,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  onPressed: () async {
+                                    final exc = ResolutionRequiredException(
+                                      resolutionId: resId.isNotEmpty ? resId : null,
+                                      trackId: trackId,
+                                      title: title,
+                                      artists: artistsList,
+                                      candidates: candidatesList,
+                                    );
+                                    final selected = await ResolutionCandidateModal.show(context, exc);
+                                    if (selected == true && mounted) {
+                                      // Refresh job status
+                                      final updated = await _api.getImportStatus(status.jobId);
+                                      setState(() {
+                                        _importStatus = updated;
+                                      });
+                                    }
+                                  },
+                                  icon: const Icon(Icons.find_in_page_rounded, size: 16),
+                                  label: const Text('Select Match', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+
                     // Failed Tracks list
                     if (status.failedTracks.isNotEmpty) ...[
+                      const SizedBox(height: 20),
                       const Text(
                         'Failed Tracks',
                         style: TextStyle(

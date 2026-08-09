@@ -243,11 +243,27 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         await _audioPlayer.setVolume(state.volume);
         await _audioPlayer.play(ap.UrlSource(streamUrl));
         success = true;
+      } on ResolutionRequiredException catch (e) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'Selection required for "${e.title}". Tap to choose match.',
+        );
+        rethrow;
+      } on TrackUnavailableException catch (e) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: e.message,
+        );
+        return;
+      } on ProviderUnavailableException catch (e) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: e.message,
+        );
+        return;
       } catch (e) {
         lastError = e;
         if (attempts < 3) {
-          // If streaming failed (e.g. 429 rate limit or buffering timeout), trigger background download
-          // so the local backend downloads & caches the audio file, then retry after a short delay
           try {
             await _api.queueDownload(finalTrack.videoId);
           } catch (_) {}

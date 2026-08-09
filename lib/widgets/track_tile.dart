@@ -12,6 +12,7 @@ import 'share_dialog.dart';
 import 'cover_image.dart';
 import 'artist_links.dart';
 import 'favorite_button.dart';
+import 'resolution_candidate_modal.dart';
 import 'toast.dart';
 
 class TrackTile extends ConsumerStatefulWidget {
@@ -92,14 +93,39 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                   ),
               ],
             ),
-            title: Text(
-              widget.track.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: isCurrent ? ZephyrColors.primary : ZephyrColors.text,
-              ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.track.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: isCurrent ? ZephyrColors.primary : ZephyrColors.text,
+                    ),
+                  ),
+                ),
+                if (widget.track.isVideoVersion) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.purple.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.4)),
+                    ),
+                    child: const Text(
+                      'VIDEO',
+                      style: TextStyle(
+                        color: Colors.purpleAccent,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
             subtitle: ArtistLinks(
               track: widget.track,
@@ -123,6 +149,28 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                   onSelected: (value) => _handleMenuSelection(context, ref, value),
                   itemBuilder: (context) {
                     return [
+                      if (widget.track.videoId.startsWith('dz_') && !widget.track.downloadStatus.startsWith('downloading'))
+                        const PopupMenuItem(
+                          value: 'reopen_resolution',
+                          child: Row(
+                            children: [
+                              Icon(Icons.sync_problem_rounded, size: 20, color: ZephyrColors.warning),
+                              SizedBox(width: 8),
+                              Text('Report wrong match'),
+                            ],
+                          ),
+                        ),
+                      if (widget.track.needsResolution)
+                        const PopupMenuItem(
+                          value: 'resolve_track',
+                          child: Row(
+                            children: [
+                              Icon(Icons.find_in_page_rounded, size: 20, color: Colors.amberAccent),
+                              SizedBox(width: 8),
+                              Text('Select match'),
+                            ],
+                          ),
+                        ),
                       const PopupMenuItem(
                         value: 'add_to_playlist',
                         child: Row(
@@ -200,6 +248,20 @@ class _TrackTileState extends ConsumerState<TrackTile> {
             ),
           ),
         );
+      case 'needs_resolution':
+        return IconButton(
+          icon: const Icon(Icons.find_in_page_rounded, color: Colors.amberAccent, size: 18),
+          tooltip: 'Selection required - Tap to choose match',
+          onPressed: () => _triggerResolutionFlow(context, ref),
+        );
+      case 'unavailable':
+        return const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8.0),
+          child: Tooltip(
+            message: 'Track Unavailable (no safe match found)',
+            child: Icon(Icons.block_rounded, color: ZephyrColors.textDim, size: 18),
+          ),
+        );
       case 'failed':
         return IconButton(
           icon: const Icon(Icons.error_outline, color: ZephyrColors.error, size: 18),
@@ -210,16 +272,64 @@ class _TrackTileState extends ConsumerState<TrackTile> {
       default:
         return IconButton(
           icon: const Icon(Icons.download_for_offline_outlined, color: ZephyrColors.textDim, size: 18),
-          onPressed: () async {
-            try {
-              await ZephyrApi().queueDownload(widget.track.videoId);
-              ZephyrToast.show(context, 'Download queued!');
-              ref.read(libraryProvider.notifier).loadLibrary();
-            } catch (e) {
-              ZephyrToast.show(context, 'Failed to queue: $e', isError: true);
-            }
-          },
+          onPressed: () => _startDownload(context, ref),
         );
+    }
+  }
+
+  Future<void> _startDownload(BuildContext context, WidgetRef ref) async {
+    try {
+      await ZephyrApi().queueDownload(widget.track.videoId);
+      if (context.mounted) {
+        ZephyrToast.show(context, 'Download queued!');
+        ref.read(libraryProvider.notifier).loadLibrary();
+      }
+    } on ResolutionRequiredException catch (e) {
+      if (context.mounted) {
+        final selected = await ResolutionCandidateModal.show(context, e);
+        if (selected == true && context.mounted) {
+          ZephyrToast.show(context, 'Selection saved! Download queued.');
+          ref.read(libraryProvider.notifier).loadLibrary();
+        }
+      }
+    } on TrackUnavailableException catch (e) {
+      if (context.mounted) {
+        ZephyrToast.show(context, e.message, isError: true);
+      }
+    } on ProviderUnavailableException catch (e) {
+      if (context.mounted) {
+        ZephyrToast.show(context, e.message, isError: true);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ZephyrToast.show(context, 'Failed to queue: $e', isError: true);
+      }
+    }
+  }
+
+  Future<void> _triggerResolutionFlow(BuildContext context, WidgetRef ref) async {
+    try {
+      final data = await ZephyrApi().getTrackResolution(widget.track.videoId);
+      if (data != null && context.mounted) {
+        final exc = ResolutionRequiredException.fromJson(data);
+        final selected = await ResolutionCandidateModal.show(context, exc);
+        if (selected == true && context.mounted) {
+          ZephyrToast.show(context, 'Selection saved!');
+          ref.read(libraryProvider.notifier).loadLibrary();
+        }
+      } else {
+        await _startDownload(context, ref);
+      }
+    } catch (e) {
+      if (e is ResolutionRequiredException && context.mounted) {
+        final selected = await ResolutionCandidateModal.show(context, e);
+        if (selected == true && context.mounted) {
+          ZephyrToast.show(context, 'Selection saved!');
+          ref.read(libraryProvider.notifier).loadLibrary();
+        }
+      } else if (context.mounted) {
+        ZephyrToast.show(context, 'Resolution error: $e', isError: true);
+      }
     }
   }
 
@@ -229,15 +339,36 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     } else if (value == 'remove_from_playlist') {
       widget.onRemoveFromPlaylist?.call();
     } else if (value == 'force_download') {
-      ZephyrApi().queueDownload(widget.track.videoId).then((_) {
-        ZephyrToast.show(context, 'Download queued!');
-        ref.read(libraryProvider.notifier).loadLibrary();
-      }).catchError((e) {
-        ZephyrToast.show(context, 'Failed to queue: $e', isError: true);
-      });
+      _startDownload(context, ref);
+    } else if (value == 'reopen_resolution') {
+      _reopenResolution(context, ref);
+    } else if (value == 'resolve_track') {
+      _triggerResolutionFlow(context, ref);
     } else if (value.startsWith('go_to_artist_')) {
       final id = value.substring('go_to_artist_'.length);
       ref.read(navigationProvider.notifier).navigateTo(ScreenState(type: ScreenType.artist, id: id));
+    }
+  }
+
+  Future<void> _reopenResolution(BuildContext context, WidgetRef ref) async {
+    try {
+      await ZephyrApi().reopenTrackResolution(widget.track.videoId);
+      if (context.mounted) {
+        ZephyrToast.show(context, 'Track reset for re-resolution.');
+        ref.read(libraryProvider.notifier).loadLibrary();
+      }
+    } on ResolutionRequiredException catch (e) {
+      if (context.mounted) {
+        final selected = await ResolutionCandidateModal.show(context, e);
+        if (selected == true && context.mounted) {
+          ZephyrToast.show(context, 'Selection saved!');
+          ref.read(libraryProvider.notifier).loadLibrary();
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ZephyrToast.show(context, 'Reopen failed: $e', isError: true);
+      }
     }
   }
 
@@ -354,6 +485,36 @@ class _TrackTileState extends ConsumerState<TrackTile> {
         ),
       ),
     ];
+
+    if (widget.track.videoId.startsWith('dz_') && !widget.track.downloadStatus.startsWith('downloading')) {
+      menuItems.add(
+        PopupMenuItem(
+          value: 'reopen_resolution',
+          child: Row(
+            children: const [
+              Icon(Icons.sync_problem_rounded, size: 20, color: ZephyrColors.warning),
+              SizedBox(width: 8),
+              Text('Report wrong match', style: TextStyle(color: ZephyrColors.text)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (widget.track.needsResolution) {
+      menuItems.add(
+        PopupMenuItem(
+          value: 'resolve_track',
+          child: Row(
+            children: const [
+              Icon(Icons.find_in_page_rounded, size: 20, color: Colors.amberAccent),
+              SizedBox(width: 8),
+              Text('Select match', style: TextStyle(color: ZephyrColors.text)),
+            ],
+          ),
+        ),
+      );
+    }
 
     if (authState.isCurator) {
       menuItems.add(

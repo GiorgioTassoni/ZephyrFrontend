@@ -7,7 +7,8 @@ class Track {
   final String? album;
   final String? albumId;
   final Duration? duration;
-  final String downloadStatus; // 'completed', 'pending', 'failed', 'downloading', 'discovered', 'not_in_db'
+  final String downloadStatus; // 'completed', 'pending', 'failed', 'downloading', 'discovered', 'not_in_db', 'needs_resolution', 'unavailable'
+  final String? videoType; // 'ATV' (audio) or 'OMV' (official music video)
   final String? localPath;
   final String? localCoverPath;
   final String? coverUrl;
@@ -25,6 +26,7 @@ class Track {
     this.albumId,
     this.duration,
     required this.downloadStatus,
+    this.videoType,
     this.localPath,
     this.localCoverPath,
     this.coverUrl,
@@ -32,6 +34,10 @@ class Track {
     this.lyricsText,
     this.lyricsLrc,
   });
+
+  bool get needsResolution => downloadStatus == 'needs_resolution';
+  bool get isUnavailable => downloadStatus == 'unavailable';
+  bool get isVideoVersion => videoType == 'OMV';
 
   factory Track.fromJson(Map<String, dynamic> json) {
     // Determine canonical track ID (track_id ?? id ?? video_id ?? videoId)
@@ -217,6 +223,7 @@ class Track {
       albumId: albId,
       duration: trackDuration,
       downloadStatus: status,
+      videoType: (json['video_type'] ?? json['videoType'])?.toString(),
       localPath: json['local_path']?.toString(),
       localCoverPath: json['local_cover_path']?.toString(),
       coverUrl: cUrl,
@@ -238,6 +245,7 @@ class Track {
       'album_id': albumId,
       'duration': duration?.inSeconds,
       'download_status': downloadStatus,
+      'video_type': videoType,
       'local_path': localPath,
       'local_cover_path': localCoverPath,
       'cover_url': coverUrl,
@@ -257,6 +265,7 @@ class Track {
     String? albumId,
     Duration? duration,
     String? downloadStatus,
+    String? videoType,
     String? localPath,
     String? localCoverPath,
     String? coverUrl,
@@ -274,6 +283,7 @@ class Track {
       albumId: albumId ?? this.albumId,
       duration: duration ?? this.duration,
       downloadStatus: downloadStatus ?? this.downloadStatus,
+      videoType: videoType ?? this.videoType,
       localPath: localPath ?? this.localPath,
       localCoverPath: localCoverPath ?? this.localCoverPath,
       coverUrl: coverUrl ?? this.coverUrl,
@@ -599,6 +609,130 @@ class HistoryEntry {
   }
 }
 
+class ResolutionCandidate {
+  final String videoId;
+  final String title;
+  final List<String> artists;
+  final int durationSeconds;
+  final String videoType; // 'ATV' or 'OMV'
+  final String? thumbnail;
+  final int matchScore;
+  final List<String> matchReasons;
+
+  ResolutionCandidate({
+    required this.videoId,
+    required this.title,
+    required this.artists,
+    required this.durationSeconds,
+    required this.videoType,
+    this.thumbnail,
+    required this.matchScore,
+    required this.matchReasons,
+  });
+
+  factory ResolutionCandidate.fromJson(Map<String, dynamic> json) {
+    return ResolutionCandidate(
+      videoId: (json['video_id'] ?? json['videoId'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      artists: json['artists'] is List ? (json['artists'] as List).map((e) => e.toString()).toList() : [],
+      durationSeconds: json['duration_seconds'] ?? json['durationSeconds'] ?? 0,
+      videoType: (json['video_type'] ?? json['videoType'] ?? 'ATV').toString(),
+      thumbnail: json['thumbnail']?.toString(),
+      matchScore: json['match_score'] ?? json['matchScore'] ?? 0,
+      matchReasons: json['match_reasons'] is List ? (json['match_reasons'] as List).map((e) => e.toString()).toList() : [],
+    );
+  }
+}
+
+class ResolutionRequiredException implements Exception {
+  final String? resolutionId;
+  final String trackId;
+  final String title;
+  final List<String> artists;
+  final int? durationSeconds;
+  final List<ResolutionCandidate> candidates;
+
+  ResolutionRequiredException({
+    this.resolutionId,
+    required this.trackId,
+    required this.title,
+    required this.artists,
+    this.durationSeconds,
+    required this.candidates,
+  });
+
+  factory ResolutionRequiredException.fromJson(Map<String, dynamic> json) {
+    List<ResolutionCandidate> candList = [];
+    if (json['candidates'] is List) {
+      candList = (json['candidates'] as List)
+          .map((c) => ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)))
+          .toList();
+    }
+    return ResolutionRequiredException(
+      resolutionId: json['resolution_id']?.toString(),
+      trackId: (json['track_id'] ?? json['trackId'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      artists: json['artists'] is List ? (json['artists'] as List).map((e) => e.toString()).toList() : [],
+      durationSeconds: json['duration_seconds'] as int?,
+      candidates: candList,
+    );
+  }
+
+  @override
+  String toString() => 'ResolutionRequiredException: Selection required for $title';
+}
+
+class TrackUnavailableException implements Exception {
+  final String message;
+  TrackUnavailableException([this.message = 'No safe YouTube Music match was found.']);
+
+  @override
+  String toString() => message;
+}
+
+class ProviderUnavailableException implements Exception {
+  final String message;
+  ProviderUnavailableException([this.message = 'Music provider is temporarily down.']);
+
+  @override
+  String toString() => message;
+}
+
+class AlbumDownloadSummary {
+  final String album;
+  final List<String> artists;
+  final int totalTracks;
+  final int queuedForDownload;
+  final int alreadyDownloaded;
+  final int needsResolution;
+  final int unavailable;
+  final int failed;
+
+  AlbumDownloadSummary({
+    required this.album,
+    required this.artists,
+    required this.totalTracks,
+    required this.queuedForDownload,
+    required this.alreadyDownloaded,
+    required this.needsResolution,
+    required this.unavailable,
+    required this.failed,
+  });
+
+  factory AlbumDownloadSummary.fromJson(Map<String, dynamic> json) {
+    return AlbumDownloadSummary(
+      album: json['album']?.toString() ?? '',
+      artists: json['artists'] is List ? (json['artists'] as List).map((e) => e.toString()).toList() : [],
+      totalTracks: json['total_tracks'] ?? 0,
+      queuedForDownload: json['queued_for_download'] ?? 0,
+      alreadyDownloaded: json['already_downloaded'] ?? 0,
+      needsResolution: json['needs_resolution'] ?? 0,
+      unavailable: json['unavailable'] ?? 0,
+      failed: json['failed'] ?? 0,
+    );
+  }
+}
+
 class ImportStatus {
   final String jobId;
   final String status;
@@ -606,7 +740,10 @@ class ImportStatus {
   final int processed;
   final int queued;
   final int failed;
+  final int needsReview;
+  final int unavailable;
   final List<Map<String, dynamic>> failedTracks;
+  final List<Map<String, dynamic>> reviewItems;
   final DateTime createdAt;
 
   ImportStatus({
@@ -616,7 +753,10 @@ class ImportStatus {
     required this.processed,
     required this.queued,
     required this.failed,
+    this.needsReview = 0,
+    this.unavailable = 0,
     required this.failedTracks,
+    this.reviewItems = const [],
     required this.createdAt,
   });
 
@@ -625,6 +765,10 @@ class ImportStatus {
     if (json['failed_tracks'] != null && json['failed_tracks'] is List) {
       fails = (json['failed_tracks'] as List).map((e) => Map<String, dynamic>.from(e)).toList();
     }
+    List<Map<String, dynamic>> reviews = [];
+    if (json['review_items'] != null && json['review_items'] is List) {
+      reviews = (json['review_items'] as List).map((e) => Map<String, dynamic>.from(e)).toList();
+    }
     return ImportStatus(
       jobId: json['job_id'] ?? '',
       status: json['status'] ?? 'processing',
@@ -632,7 +776,10 @@ class ImportStatus {
       processed: json['processed'] ?? 0,
       queued: json['queued'] ?? 0,
       failed: json['failed'] ?? 0,
+      needsReview: json['needs_review'] ?? 0,
+      unavailable: json['unavailable'] ?? 0,
       failedTracks: fails,
+      reviewItems: reviews,
       createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : DateTime.now(),
     );
   }

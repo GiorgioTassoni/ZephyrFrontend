@@ -347,10 +347,81 @@ class ZephyrApi {
     }
   }
 
-  Future<Map<String, dynamic>> downloadAlbum(String browseId) async {
+  Future<AlbumDownloadSummary> downloadAlbum(String browseId) async {
     final formattedId = RegExp(r'^\d+$').hasMatch(browseId) ? 'dz_$browseId' : browseId;
     try {
       final response = await _dio.post('/api/albums/download/$formattedId');
+      return AlbumDownloadSummary.fromJson(response.data);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  // --- Track Resolution ---
+
+  Future<Map<String, dynamic>?> getTrackResolution(String trackId) async {
+    try {
+      final response = await _dio.get('/api/tracks/$trackId/resolution');
+      return response.data;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return null;
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> selectTrackCandidate(
+    String trackId, {
+    required String? resolutionId,
+    required String videoId,
+  }) async {
+    try {
+      final body = <String, dynamic>{'video_id': videoId};
+      if (resolutionId != null) body['resolution_id'] = resolutionId;
+      final response = await _dio.post(
+        '/api/tracks/$trackId/resolution',
+        data: body,
+      );
+      return response.data;
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<void> cancelTrackResolution(String trackId, {String? resolutionId}) async {
+    try {
+      await _dio.delete(
+        '/api/tracks/$trackId/resolution',
+        queryParameters: resolutionId != null ? {'resolution_id': resolutionId} : null,
+      );
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> reopenTrackResolution(String trackId) async {
+    try {
+      final response = await _dio.post('/api/tracks/$trackId/resolution/reopen');
+      return response.data;
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> selectImportResolution(String resolutionId, String candidateId) async {
+    try {
+      final response = await _dio.post(
+        '/api/import/resolution/$resolutionId',
+        data: {'candidate_id': candidateId},
+      );
+      return response.data;
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> retryImportResolution(String resolutionId) async {
+    try {
+      final response = await _dio.post('/api/import/resolution/$resolutionId/retry');
       return response.data;
     } on DioException catch (e) {
       throw _handleDioError(e);
@@ -374,7 +445,7 @@ class ZephyrApi {
     try {
       final response = await _dio.get('/api/favorites/$formattedId');
       return response.data['is_favorite'] ?? false;
-    } on DioException catch (e) {
+    } on DioException catch (_) {
       // If it fails, return false
       return false;
     }
@@ -896,10 +967,20 @@ class ZephyrApi {
 
   // --- Error Handling ---
 
-  String _handleDioError(DioException error) {
+  Object _handleDioError(DioException error) {
     if (error.response != null) {
       final data = error.response?.data;
       if (data is Map) {
+        final code = data['code']?.toString();
+        if (error.response?.statusCode == 409 || code == 'MATCH_SELECTION_REQUIRED') {
+          return ResolutionRequiredException.fromJson(Map<String, dynamic>.from(data));
+        }
+        if (code == 'TRACK_UNAVAILABLE' || (error.response?.statusCode == 404 && code != null)) {
+          return TrackUnavailableException(data['message']?.toString() ?? 'No safe YouTube Music match was found.');
+        }
+        if (code == 'PROVIDER_UNAVAILABLE' || error.response?.statusCode == 503) {
+          return ProviderUnavailableException(data['message']?.toString() ?? 'Music provider is temporarily down.');
+        }
         if (data.containsKey('missing_ids')) {
           final missing = (data['missing_ids'] as List).join(', ');
           return 'Artist not found: Unknown artist ID(s): $missing';

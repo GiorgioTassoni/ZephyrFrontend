@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
@@ -105,10 +106,14 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                     decoration: BoxDecoration(
                       image: _artist!.coverUrl != null && _artist!.coverUrl!.isNotEmpty
                           ? DecorationImage(
-                              image: NetworkImage(
+                              image: CachedNetworkImageProvider(
                                 _artist!.coverUrl!.startsWith('/')
                                     ? '${_api.baseUrl}${_artist!.coverUrl!}'
                                     : _artist!.coverUrl!,
+                                headers: {
+                                  if (_api.token != null)
+                                    'Authorization': 'Bearer ${_api.token}',
+                                },
                               ),
                               fit: BoxFit.cover,
                               colorFilter: ColorFilter.mode(

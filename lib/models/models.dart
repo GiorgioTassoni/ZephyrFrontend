@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class Track {
   final String videoId; // Canonical track ID (e.g. dz_3135551, local_123)
   final String? ytId; // Optional backend YouTube source ID
@@ -83,11 +85,38 @@ class Track {
 
     if (rawArtists != null) {
       if (rawArtists is String) {
-        artistsList = rawArtists
-            .split(',')
-            .map((e) => e.trim())
-            .where((e) => e.isNotEmpty)
-            .toList();
+        final trimmed = rawArtists.trim();
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          try {
+            final decoded = jsonDecode(trimmed);
+            if (decoded is List) {
+              for (final e in decoded) {
+                if (e is Map) {
+                  final name = (e['name'] ?? e['title'] ?? e['artist'] ?? '')
+                      .toString()
+                      .trim();
+                  if (name.isNotEmpty) artistsList.add(name);
+                } else if (e != null) {
+                  final s = e.toString().trim();
+                  if (s.isNotEmpty) artistsList.add(s);
+                }
+              }
+            }
+          } catch (_) {
+            artistsList = trimmed
+                .replaceAll(RegExp(r'^[\[\s"\\]+|[\]\s"\\]+$'), '')
+                .split(',')
+                .map((e) => e.replaceAll('"', '').replaceAll("'", '').trim())
+                .where((e) => e.isNotEmpty)
+                .toList();
+          }
+        } else {
+          artistsList = rawArtists
+              .split(',')
+              .map((e) => e.trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+        }
       } else if (rawArtists is List) {
         for (final e in rawArtists) {
           if (e is Map) {
@@ -1006,6 +1035,40 @@ class ImportStatus {
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
           : DateTime.now(),
+    );
+  }
+
+  ImportStatus copyWith({
+    String? jobId,
+    String? status,
+    int? total,
+    int? processed,
+    int? queued,
+    int? failed,
+    int? needsReview,
+    int? unavailable,
+    List<Map<String, dynamic>>? failedTracks,
+    List<Map<String, dynamic>>? reviewItems,
+    String? statusUrl,
+    String? importMode,
+    String? playlistName,
+    DateTime? createdAt,
+  }) {
+    return ImportStatus(
+      jobId: jobId ?? this.jobId,
+      status: status ?? this.status,
+      total: total ?? this.total,
+      processed: processed ?? this.processed,
+      queued: queued ?? this.queued,
+      failed: failed ?? this.failed,
+      needsReview: needsReview ?? this.needsReview,
+      unavailable: unavailable ?? this.unavailable,
+      failedTracks: failedTracks ?? this.failedTracks,
+      reviewItems: reviewItems ?? this.reviewItems,
+      statusUrl: statusUrl ?? this.statusUrl,
+      importMode: importMode ?? this.importMode,
+      playlistName: playlistName ?? this.playlistName,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 }

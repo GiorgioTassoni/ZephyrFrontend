@@ -200,21 +200,40 @@ class _ResolutionCandidateModalState
       );
       if (result == null || result.files.single.path == null) return;
 
+      final file = File(result.files.single.path!);
+      final trackId = widget.exception.trackId.trim();
+
+      File? coverFile;
+      if (trackId.isEmpty) {
+        if (!mounted) return;
+        ZephyrToast.show(context, 'Please select a cover image for this new track.');
+        final coverResult = await FilePicker.platform.pickFiles(
+          type: FileType.image,
+        );
+        if (coverResult == null || coverResult.files.single.path == null) {
+          if (mounted) {
+            ZephyrToast.show(context, 'Upload cancelled: Cover image is required for new tracks.', isError: true);
+          }
+          return;
+        }
+        coverFile = File(coverResult.files.single.path!);
+      }
+
       setState(() {
         _isLoadingCandidates = true;
         _errorMessage = null;
       });
 
-      final file = File(result.files.single.path!);
       await ZephyrApi().uploadTrack(
         file: file,
+        cover: coverFile,
         title: widget.exception.title.isNotEmpty
             ? widget.exception.title
-            : widget.exception.trackId,
+            : (trackId.isNotEmpty ? trackId : file.path.split(Platform.pathSeparator).last),
         artists: widget.exception.artists.isNotEmpty
             ? widget.exception.artists.join(', ')
             : 'Unknown Artist',
-        targetTrackId: widget.exception.trackId,
+        targetTrackId: trackId.isNotEmpty ? trackId : null,
       );
 
       if (mounted) {

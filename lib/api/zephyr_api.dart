@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
 
@@ -43,6 +44,15 @@ class ZephyrApi {
     }
   }
 
+  final _importProgressController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onImportProgress => _importProgressController.stream;
+
+  void notifyImportProgress(Map<String, dynamic> data) {
+    if (!_importProgressController.isClosed) {
+      _importProgressController.add(data);
+    }
+  }
+
   static final ZephyrApi _instance = ZephyrApi._internal();
 
   factory ZephyrApi() {
@@ -58,6 +68,16 @@ class ZephyrApi {
         receiveTimeout: const Duration(seconds: 30),
       ),
     );
+    if (!kIsWeb) {
+      _dio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final client = HttpClient();
+          client.idleTimeout = const Duration(seconds: 15);
+          client.maxConnectionsPerHost = 8;
+          return client;
+        },
+      );
+    }
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
@@ -323,8 +343,12 @@ class ZephyrApi {
           : '';
       final backendUrl = Uri.parse('$_baseUrl/api/tracks/stream/$videoId');
 
+      HttpClient? client;
       try {
-        final client = HttpClient();
+        client = HttpClient()
+          ..idleTimeout = const Duration(seconds: 15)
+          ..connectionTimeout = const Duration(seconds: 15);
+
         final backendReq = await client.getUrl(backendUrl);
         if (_token != null) {
           backendReq.headers.set('Authorization', 'Bearer $_token');
@@ -350,7 +374,6 @@ class ZephyrApi {
           req.response.headers.contentType = ContentType.json;
           req.response.write(errorBody);
           await req.response.close();
-          client.close(force: true);
           return;
         }
 
@@ -361,10 +384,13 @@ class ZephyrApi {
           } catch (_) {}
         });
         await backendResp.pipe(req.response);
-        client.close();
       } catch (e) {
-        req.response.statusCode = HttpStatus.badGateway;
-        await req.response.close();
+        try {
+          req.response.statusCode = HttpStatus.badGateway;
+          await req.response.close();
+        } catch (_) {}
+      } finally {
+        client?.close(force: true);
       }
     });
   }
@@ -572,66 +598,96 @@ class ZephyrApi {
       url += '&device_name=${Uri.encodeComponent(deviceName)}';
     }
     final uri = Uri.parse(url);
-    final client = HttpClient();
+    final client = HttpClient()
+      ..idleTimeout = const Duration(seconds: 30)
+      ..connectionTimeout = const Duration(seconds: 15);
 
-    while (true) {
-      try {
-        final request = await client.getUrl(uri);
-        if (_token != null) {
-          request.headers.set('Authorization', 'Bearer $_token');
-          request.headers.set('Cookie', 'access_token=$_token');
-        }
-        request.headers.set('Accept', 'text/event-stream');
-        request.headers.set('Cache-Control', 'no-cache');
-
-        final response = await request.close();
-        if (response.statusCode != 200) {
-          await Future.delayed(const Duration(seconds: 3));
+    try {
+      int failureCount = 0;
+      while (true) {
+        if (_token == null) {
+          await Future.delayed(const Duration(seconds: 5));
           continue;
         }
 
-        String eventType = 'message';
-        StringBuffer dataBuffer = StringBuffer();
+        try {
+          final request = await client.getUrl(uri);
+          request.headers.set('Authorization', 'Bearer $_token');
+          request.headers.set('Cookie', 'access_token=$_token');
+          request.headers.set('Accept', 'text/event-stream');
+          request.headers.set('Cache-Control', 'no-cache');
 
-        await for (final line
-            in response
-                .transform(utf8.decoder)
-                .transform(const LineSplitter())) {
-          final trimmed = line.trim();
-          if (trimmed.isEmpty) {
-            if (dataBuffer.isNotEmpty) {
-              final rawData = dataBuffer.toString();
-              dataBuffer.clear();
-              if (eventType == 'state' ||
-                  eventType == 'message' ||
-                  eventType == 'devices' ||
-                  eventType == 'library' ||
-                  eventType == 'track_status') {
-                try {
-                  final parsed = jsonDecode(rawData);
-                  if (parsed is Map<String, dynamic>) {
-                    parsed['_event_type'] = eventType;
-                    yield parsed;
-                  }
-                } catch (_) {}
-              }
-              eventType = 'message';
+          final response = await request.close();
+          if (response.statusCode == 401) {
+            await response.drain<void>().catchError((_) {});
+            final refreshed = await _tryRefresh();
+            if (!refreshed) {
+              onUnauthorized?.call();
+              await Future.delayed(const Duration(seconds: 5));
             }
             continue;
           }
 
-          if (trimmed.startsWith('event:')) {
-            eventType = trimmed.substring(6).trim();
-          } else if (trimmed.startsWith('data:')) {
-            if (dataBuffer.isNotEmpty) dataBuffer.write('\n');
-            dataBuffer.write(trimmed.substring(5).trim());
+          if (response.statusCode != 200) {
+            await response.drain<void>().catchError((_) {});
+            failureCount++;
+            final delaySeconds = (3 * failureCount).clamp(3, 30);
+            await Future.delayed(Duration(seconds: delaySeconds));
+            continue;
           }
-        }
-      } catch (e) {
-        debugPrint('SSE connection notice: $e');
-      }
 
-      await Future.delayed(const Duration(seconds: 3));
+          failureCount = 0;
+          String eventType = 'message';
+          StringBuffer dataBuffer = StringBuffer();
+
+          await for (final line
+              in response
+                  .transform(utf8.decoder)
+                  .transform(const LineSplitter())) {
+            final trimmed = line.trim();
+            if (trimmed.isEmpty) {
+              if (dataBuffer.isNotEmpty) {
+                final rawData = dataBuffer.toString();
+                dataBuffer.clear();
+                if (eventType == 'state' ||
+                    eventType == 'message' ||
+                    eventType == 'devices' ||
+                    eventType == 'library' ||
+                    eventType == 'track_status' ||
+                    eventType == 'import_progress') {
+                  try {
+                    final parsed = jsonDecode(rawData);
+                    if (parsed is Map<String, dynamic>) {
+                      parsed['_event_type'] = eventType;
+                      if (eventType == 'import_progress') {
+                        notifyImportProgress(parsed);
+                      }
+                      yield parsed;
+                    }
+                  } catch (_) {}
+                }
+                eventType = 'message';
+              }
+              continue;
+            }
+
+            if (trimmed.startsWith('event:')) {
+              eventType = trimmed.substring(6).trim();
+            } else if (trimmed.startsWith('data:')) {
+              if (dataBuffer.isNotEmpty) dataBuffer.write('\n');
+              dataBuffer.write(trimmed.substring(5).trim());
+            }
+          }
+        } catch (e) {
+          debugPrint('SSE connection notice: $e');
+          failureCount++;
+        }
+
+        final delaySeconds = (3 * failureCount).clamp(3, 30);
+        await Future.delayed(Duration(seconds: delaySeconds));
+      }
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -1158,6 +1214,29 @@ class ZephyrApi {
             : '/api/import/status/$jobId',
       );
       return ImportStatus.fromJson(response.data);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<List<ImportStatus>> getImportList() async {
+    try {
+      final response = await _dio.get('/api/import/list');
+      if (response.data is List) {
+        return (response.data as List)
+            .map((e) => ImportStatus.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+      return [];
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> cancelImportJob(String jobId) async {
+    try {
+      final response = await _dio.post('/api/import/jobs/$jobId/cancel');
+      return response.data;
     } on DioException catch (e) {
       throw _handleDioError(e);
     }

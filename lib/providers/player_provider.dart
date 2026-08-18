@@ -507,6 +507,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       activeDeviceName: null,
     );
 
+    if (_api.token == null) return;
+
     try {
       final s = await _api.getPlayerState();
       debugPrint(
@@ -1364,8 +1366,12 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
     ref.listen(authProvider, (previous, next) {
       if (next.token == null) {
+        _sseSub?.cancel();
+        _sseSub = null;
         _audioPlayer.stop();
         state = ZephyrPlayerState();
+      } else if (previous?.token == null && next.token != null) {
+        _initDeviceAndSse();
       }
     });
 
@@ -1625,17 +1631,25 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
     List<Track> queueToSet = playQueue;
     if (isNewQueue) {
-      // Starting a new playlist / album / context: position clicked track at top with remaining tracks
-      final foundIdx = playQueue.indexWhere((t) => t.videoId == track.videoId);
-      if (foundIdx != -1) {
-        final remaining = playQueue.sublist(foundIdx + 1);
+      if (state.isShuffled) {
+        final remaining = playQueue.where((t) => t.videoId != track.videoId).toList()..shuffle();
         queueToSet = [track, ...remaining];
+      } else {
+        final foundIdx = playQueue.indexWhere((t) => t.videoId == track.videoId);
+        if (foundIdx != -1) {
+          final remaining = playQueue.sublist(foundIdx + 1);
+          queueToSet = [track, ...remaining];
+        }
       }
     } else if (origin == 'context' && state.queue.isNotEmpty) {
-      // Play-and-remove semantics for same-playlist clicks: keep playlist queue and remove clicked track from upcoming
-      final remaining = List<Track>.from(state.queue)
-        ..removeWhere((t) => t.videoId == track.videoId);
-      queueToSet = [track, ...remaining];
+      if (state.isShuffled) {
+        final remaining = playQueue.where((t) => t.videoId != track.videoId).toList()..shuffle();
+        queueToSet = [track, ...remaining];
+      } else {
+        final remaining = List<Track>.from(state.queue)
+          ..removeWhere((t) => t.videoId == track.videoId);
+        queueToSet = [track, ...remaining];
+      }
     } else if (origin == 'queue' && state.queue.isNotEmpty) {
       // Skip-to semantics for queue view clicks: drop preceding tracks
       final foundIdx = state.queue.indexWhere(
@@ -1650,7 +1664,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       isPlaying: false,
       currentTrack: track,
       queue: queueToSet,
-      originalQueue: (isNewQueue || !state.isShuffled) ? playQueue : state.originalQueue,
+      originalQueue: isNewQueue ? playQueue : (state.isShuffled ? state.originalQueue : playQueue),
       currentIndex: 0,
       position: initialPosition ?? Duration.zero,
       duration: initialDur,
@@ -2602,7 +2616,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
   void toggleShuffle() {
     final currentlyShuffled = state.isShuffled;
-    if (state.queue.isEmpty) return;
+    if (state.queue.isEmpty) {
+      state = state.copyWith(isShuffled: !currentlyShuffled);
+      return;
+    }
 
     List<Track> newQueue;
     int newIndex;

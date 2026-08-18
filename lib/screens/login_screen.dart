@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../api/zephyr_api.dart';
 import '../providers/auth_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/toast.dart';
@@ -12,12 +13,27 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
+  static const String _cloudServerUrl = 'https://zephyrmusic.duckdns.org';
+  static const String _localServerUrl = 'http://localhost:8000';
+
   final _formKey = GlobalKey<FormState>();
-  final _serverController = TextEditingController(text: 'http://localhost:8000');
+  late final TextEditingController _serverController;
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isRegisterMode = false;
   bool _obscurePassword = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final initialUrl = ZephyrApi().baseUrl;
+    _serverController = TextEditingController(
+      text: initialUrl.isNotEmpty ? initialUrl : _cloudServerUrl,
+    );
+    _serverController.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
 
   @override
   void dispose() {
@@ -60,6 +76,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
+    final currentServer = _serverController.text.trim();
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
@@ -115,7 +132,91 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 24),
+
+                  // Quick Server Presets
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: currentServer == _cloudServerUrl
+                                ? ZephyrColors.primary.withValues(alpha: 0.15)
+                                : Colors.transparent,
+                            side: BorderSide(
+                              color: currentServer == _cloudServerUrl
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.bgLight,
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          icon: Icon(
+                            Icons.cloud_rounded,
+                            size: 16,
+                            color: currentServer == _cloudServerUrl
+                                ? ZephyrColors.primary
+                                : ZephyrColors.textDim,
+                          ),
+                          label: Text(
+                            'Cloud Server',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: currentServer == _cloudServerUrl
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.text,
+                            ),
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _serverController.text = _cloudServerUrl;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: currentServer == _localServerUrl
+                                ? ZephyrColors.primary.withValues(alpha: 0.15)
+                                : Colors.transparent,
+                            side: BorderSide(
+                              color: currentServer == _localServerUrl
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.bgLight,
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          icon: Icon(
+                            Icons.computer_rounded,
+                            size: 16,
+                            color: currentServer == _localServerUrl
+                                ? ZephyrColors.primary
+                                : ZephyrColors.textDim,
+                          ),
+                          label: Text(
+                            'Localhost',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: currentServer == _localServerUrl
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.text,
+                            ),
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _serverController.text = _localServerUrl;
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
 
                   // Server URL Field
                   TextFormField(

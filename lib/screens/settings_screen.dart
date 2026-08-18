@@ -74,7 +74,89 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     'Zephyr Server Address',
                     style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                                ? ZephyrColors.primary.withValues(alpha: 0.15)
+                                : Colors.transparent,
+                            side: BorderSide(
+                              color: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.bgLight,
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          icon: Icon(
+                            Icons.cloud_rounded,
+                            size: 16,
+                            color: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                                ? ZephyrColors.primary
+                                : ZephyrColors.textDim,
+                          ),
+                          label: Text(
+                            'Cloud (Default)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.text,
+                            ),
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _serverController.text = 'https://zephyrmusic.duckdns.org';
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: _serverController.text.trim() == 'http://localhost:8000'
+                                ? ZephyrColors.primary.withValues(alpha: 0.15)
+                                : Colors.transparent,
+                            side: BorderSide(
+                              color: _serverController.text.trim() == 'http://localhost:8000'
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.bgLight,
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          icon: Icon(
+                            Icons.computer_rounded,
+                            size: 16,
+                            color: _serverController.text.trim() == 'http://localhost:8000'
+                                ? ZephyrColors.primary
+                                : ZephyrColors.textDim,
+                          ),
+                          label: Text(
+                            'Localhost',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _serverController.text.trim() == 'http://localhost:8000'
+                                  ? ZephyrColors.primary
+                                  : ZephyrColors.text,
+                            ),
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _serverController.text = 'http://localhost:8000';
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   if (isMobile) ...[
                     TextField(
                       controller: _serverController,

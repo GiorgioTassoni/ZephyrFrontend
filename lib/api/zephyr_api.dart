@@ -22,7 +22,7 @@ class PlayerActiveException implements Exception {
 
 class ZephyrApi {
   late Dio _dio;
-  String _baseUrl = 'http://localhost:8000';
+  String _baseUrl = 'https://zephyrmusic.duckdns.org';
   String? _token; // short-lived access token (JWT, 15 min)
   String? _refreshToken; // long-lived refresh token (opaque, 14 days)
   void Function()? onUnauthorized;
@@ -138,7 +138,7 @@ class ZephyrApi {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString('zephyr_server_url') ?? 'http://localhost:8000';
+    _baseUrl = prefs.getString('zephyr_server_url') ?? 'https://zephyrmusic.duckdns.org';
     _token = prefs.getString('zephyr_auth_token');
     _refreshToken = prefs.getString('zephyr_refresh_token');
     _dio.options.baseUrl = _baseUrl;

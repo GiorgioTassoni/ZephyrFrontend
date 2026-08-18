@@ -52,7 +52,20 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "Zephyr");
   }
 
-  gtk_window_set_icon_from_file(window, "data/flutter_assets/References/Zephyr.png", nullptr);
+  // Load application icon dynamically from bundled assets or working directory
+  g_autoptr(GFile) exe_file = g_file_new_for_path("/proc/self/exe");
+  g_autoptr(GFile) exe_dir = g_file_get_parent(exe_file);
+  g_autofree gchar* exe_dir_path = g_file_get_path(exe_dir);
+  g_autofree gchar* icon_path = g_build_filename(exe_dir_path, "data", "flutter_assets", "References", "Zephyr.png", nullptr);
+
+  if (g_file_test(icon_path, G_FILE_TEST_EXISTS)) {
+    gtk_window_set_icon_from_file(window, icon_path, nullptr);
+    gtk_window_set_default_icon_from_file(icon_path, nullptr);
+  } else if (g_file_test("References/Zephyr.png", G_FILE_TEST_EXISTS)) {
+    gtk_window_set_icon_from_file(window, "References/Zephyr.png", nullptr);
+    gtk_window_set_default_icon_from_file("References/Zephyr.png", nullptr);
+  }
+
   gtk_window_set_default_size(window, 1280, 720);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

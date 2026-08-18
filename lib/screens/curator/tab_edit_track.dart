@@ -164,12 +164,9 @@ class _EditTrackTabState extends State<EditTrackTab> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
-      child: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(40, 8, 40, 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Track selector ────────────────────────────
               curatorLabel('Select Track', req: true),
@@ -403,8 +400,6 @@ class _EditTrackTabState extends State<EditTrackTab> {
               ],
             ],
           ),
-        ),
-      ),
     );
   }
 }

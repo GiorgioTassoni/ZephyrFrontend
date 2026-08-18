@@ -24,6 +24,7 @@ class UploadTrackTab extends StatefulWidget {
 class _UploadTrackTabState extends State<UploadTrackTab> {
   final _api = ZephyrApi();
   final _titleCtrl = TextEditingController();
+  final _targetTrackIdCtrl = TextEditingController();
 
   File? _audio;
   File? _cover;
@@ -36,12 +37,13 @@ class _UploadTrackTabState extends State<UploadTrackTab> {
   @override
   void dispose() {
     _titleCtrl.dispose();
+    _targetTrackIdCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _pickAudio() async {
     try {
-      final r = await FilePicker.pickFiles(
+      final r = await FilePicker.platform.pickFiles(
           type: FileType.audio, allowMultiple: false);
       if (r?.files.single.path != null) {
         setState(() => _audio = File(r!.files.single.path!));
@@ -54,11 +56,12 @@ class _UploadTrackTabState extends State<UploadTrackTab> {
       setState(() => _err = 'Please select an audio file.');
       return;
     }
-    if (_titleCtrl.text.trim().isEmpty) {
-      setState(() => _err = 'Please enter a track title.');
+    final targetId = _targetTrackIdCtrl.text.trim();
+    if (targetId.isEmpty && _titleCtrl.text.trim().isEmpty) {
+      setState(() => _err = 'Please enter a track title or target track ID.');
       return;
     }
-    if (_artists.isEmpty) {
+    if (targetId.isEmpty && _artists.isEmpty) {
       setState(() => _err = 'Please add at least one artist from local artists.');
       return;
     }
@@ -71,10 +74,11 @@ class _UploadTrackTabState extends State<UploadTrackTab> {
     try {
       final res = await _api.uploadTrack(
         file: _audio!,
-        title: _titleCtrl.text.trim(),
-        artists: _artists.map((a) => a['name'] as String).join(', '),
+        title: _titleCtrl.text.trim().isNotEmpty ? _titleCtrl.text.trim() : null,
+        artists: _artists.isNotEmpty ? _artists.map((a) => a['name'] as String).join(', ') : null,
         album: _album,
-        duration: null, // Extracted from file metadata on the backend
+        targetTrackId: targetId.isNotEmpty ? targetId : null,
+        duration: null,
       );
       final tid = res['track_id'] as String?;
       if (_cover != null && tid != null) {
@@ -83,12 +87,13 @@ class _UploadTrackTabState extends State<UploadTrackTab> {
         } catch (_) {}
       }
       setState(() {
-        _ok = 'Track uploaded successfully!';
+        _ok = 'Track uploaded/fulfilled successfully!';
         _audio = null;
         _cover = null;
         _artists = [];
         _album = null;
         _titleCtrl.clear();
+        _targetTrackIdCtrl.clear();
       });
       widget.onSuccess();
     } catch (e) {
@@ -101,12 +106,9 @@ class _UploadTrackTabState extends State<UploadTrackTab> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
-      child: Center(
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(40, 8, 40, 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── File pickers ──────────────────────────────
               Row(
@@ -154,8 +156,17 @@ class _UploadTrackTabState extends State<UploadTrackTab> {
               ),
               curatorGap,
 
+              // ── Target Track ID (Optional Fulfill) ───────────────
+              curatorLabel('Target Track ID (optional fulfill for dz_... tracks)'),
+              TextField(
+                controller: _targetTrackIdCtrl,
+                style: const TextStyle(fontSize: 13),
+                decoration: curatorField('e.g. dz_1297319772'),
+              ),
+              curatorGap,
+
               // ── Song Title (Full width) ───────────────────
-              curatorLabel('Song Title', req: true),
+              curatorLabel('Song Title (required for new local track)'),
               TextField(
                 controller: _titleCtrl,
                 style: const TextStyle(fontSize: 13),
@@ -208,8 +219,6 @@ class _UploadTrackTabState extends State<UploadTrackTab> {
               ),
             ],
           ),
-        ),
-      ),
     );
   }
 }

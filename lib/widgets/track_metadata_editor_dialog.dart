@@ -94,19 +94,21 @@ class _TrackMetadataEditorDialogState extends State<TrackMetadataEditorDialog> w
 
   Future<void> _pickCoverFile() async {
     try {
-      final result = await FilePicker.pickFiles(
+      final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
       );
-      if (result != null && result.files.single.path != null) {
+      if (result != null && result.files.single.path != null && mounted) {
         setState(() {
           _selectedCoverFile = File(result.files.single.path!);
         });
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to pick cover: $e'), backgroundColor: ZephyrColors.error),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to pick cover: $e'), backgroundColor: ZephyrColors.error),
+        );
+      }
     }
   }
 
@@ -227,8 +229,9 @@ class _TrackMetadataEditorDialogState extends State<TrackMetadataEditorDialog> w
         await _api.uploadTrackCover(widget.track.videoId, _selectedCoverFile!);
       }
 
-      Navigator.pop(context, true);
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isSaving = false;
       });
@@ -417,7 +420,7 @@ class _TrackMetadataEditorDialogState extends State<TrackMetadataEditorDialog> w
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _selectedAlbumId,
+                initialValue: _selectedAlbumId,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),

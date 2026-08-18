@@ -146,7 +146,7 @@ Widget curatorAlbumDrop(
   }
 
   return DropdownButtonFormField<String>(
-    value: selected,
+    initialValue: selected,
     decoration: curatorField(''), // Empty label to avoid double label
     dropdownColor: ZephyrColors.bgCard,
     isDense: true,
@@ -652,12 +652,14 @@ class CuratorSubmitRow extends StatelessWidget {
 
 class CuratorPillBar extends StatelessWidget {
   final List<String> labels;
+  final List<IconData>? icons;
   final int selected;
   final ValueChanged<int> onTap;
 
   const CuratorPillBar({
     super.key,
     required this.labels,
+    this.icons,
     required this.selected,
     required this.onTap,
   });
@@ -665,35 +667,46 @@ class CuratorPillBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(3),
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: ZephyrColors.bgCard,
-        borderRadius: BorderRadius.circular(11),
-        border:
-            Border.all(color: ZephyrColors.bgLight.withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: ZephyrColors.bgLight.withValues(alpha: 0.4)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: List.generate(labels.length, (i) {
           final active = i == selected;
+          final icon = (icons != null && i < icons!.length) ? icons![i] : null;
           return GestureDetector(
             onTap: () => onTap(i),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 160),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
                 color: active ? ZephyrColors.primary : Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(20),
               ),
-              child: Text(
-                labels[i],
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight:
-                      active ? FontWeight.w700 : FontWeight.w500,
-                  color: active ? Colors.black : ZephyrColors.textDim,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (icon != null) ...[
+                    Icon(
+                      icon,
+                      size: 15,
+                      color: active ? Colors.black : ZephyrColors.textDim,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Text(
+                    labels[i],
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: active ? FontWeight.bold : FontWeight.w500,
+                      color: active ? Colors.black : ZephyrColors.textDim,
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -708,7 +721,7 @@ class CuratorPillBar extends StatelessWidget {
 Future<File?> pickImageFile() async {
   try {
     final r =
-        await FilePicker.pickFiles(type: FileType.image, allowMultiple: false);
+        await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: false);
     if (r?.files.single.path != null) return File(r!.files.single.path!);
   } catch (_) {}
   return null;

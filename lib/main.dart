@@ -2,6 +2,7 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'api/zephyr_api.dart';
 import 'providers/auth_provider.dart';
@@ -10,6 +11,8 @@ import 'screens/change_password_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_layout.dart';
 import 'theme/colors.dart';
+import 'utils/audio_handler.dart';
+import 'utils/root_navigator.dart';
 
 String? _extractVideoIdFromDeepLink(String rawUrl) {
   try {
@@ -46,9 +49,27 @@ void _disableGStreamerVideoSink() {
   } catch (_) {}
 }
 
-void main(List<String> args) {
+void main(List<String> args) async {
   _disableGStreamerVideoSink();
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],
+  );
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ),
+  );
+
+  // Initialize background AudioService
+  try {
+    zephyrAudioHandler = await initAudioService();
+  } catch (e) {
+    debugPrint('AudioService init notice: $e');
+    zephyrAudioHandler ??= ZephyrAudioHandler();
+  }
   
   String? initialVideoId;
   if (args.isNotEmpty) {
@@ -116,6 +137,7 @@ class _ZephyrAppState extends ConsumerState<ZephyrApp> {
     }
 
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       title: 'Zephyr self-hosted music player',
       debugShowCheckedModeBanner: false,
       theme: ZephyrColors.darkTheme,

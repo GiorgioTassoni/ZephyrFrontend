@@ -4,6 +4,7 @@ import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../providers/library_provider.dart';
 import '../theme/colors.dart';
+import '../theme/zephyr_theme.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/track_tile.dart';
 import '../widgets/toast.dart';
@@ -131,164 +132,291 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
 
     final tracks = _album!.tracks ?? [];
 
+    final isMobile = MediaQuery.of(context).size.width < 700;
+
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
       body: RefreshIndicator(
         onRefresh: () => _fetchAlbumDetails(bypassCache: true),
         color: ZephyrColors.primary,
         backgroundColor: ZephyrColors.bgCard,
-        child: SingleChildScrollView(
+        child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header Details Pane
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  CoverImage(
-                    coverUrl: _album!.coverUrl,
-                    size: 200,
-                    borderRadius: 12,
-                  ),
-                  const SizedBox(width: 24),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _album!.displayBadge,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                            color: ZephyrColors.textDim,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _album!.name,
-                          style: const TextStyle(
-                            fontSize: 36,
-                            fontWeight: FontWeight.bold,
-                            color: ZephyrColors.text,
-                            letterSpacing: -1,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            const Icon(Icons.person, size: 16, color: ZephyrColors.primary),
-                            const SizedBox(width: 6),
-                            Text(
-                              _album!.artists.join(', '),
-                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                            ),
-                            if (_album!.year != null) ...[
-                              const SizedBox(width: 12),
-                              const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
-                              const SizedBox(width: 12),
-                              Text(
-                                '${_album!.year}',
-                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+          slivers: [
+            // Album Header Pane & Table Headers
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 16 : 32,
+                  vertical: isMobile ? 16 : 32,
+                ),
+                child: Column(
+                  crossAxisAlignment: isMobile ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+                  children: [
+                    if (isMobile) ...[
+                      // Mobile Header Layout: Centered Cover Image & Details Below
+                      Center(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: ZephyrColors.primary.withValues(alpha: 0.35),
+                                blurRadius: 28,
+                                spreadRadius: 2,
                               ),
                             ],
-                            const SizedBox(width: 12),
-                            const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
-                            const SizedBox(width: 12),
-                            Text(
-                              '${_album!.trackCount ?? tracks.length} songs',
+                          ),
+                          child: CoverImage(
+                            coverUrl: _album!.coverUrl,
+                            size: 180,
+                            borderRadius: 12,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: ZephyrColors.primary.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: ZephyrColors.primary.withValues(alpha: 0.4)),
+                            ),
+                            child: Text(
+                              _album!.displayBadge.toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: ZephyrColors.primary,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            _album!.name,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: ZephyrColors.text,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              const Icon(Icons.person, size: 16, color: ZephyrColors.primary),
+                              Text(
+                                _album!.artists.join(', '),
+                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: ZephyrColors.text),
+                              ),
+                              if (_album!.year != null) ...[
+                                const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                                Text(
+                                  '${_album!.year}',
+                                  style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                                ),
+                              ],
+                              const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                              Text(
+                                '${_album!.trackCount ?? tracks.length} songs',
+                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                              ),
+                              if (_album!.downloadedCount != null && _album!.downloadedCount! > 0) ...[
+                                const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                                Text(
+                                  '${_album!.downloadedCount} downloaded',
+                                  style: const TextStyle(color: ZephyrTheme.accentSuccess, fontSize: 13, fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_'))
+                            ElevatedButton.icon(
+                              style: ZephyrTheme.primaryPillStyle(),
+                              onPressed: _downloadAllTracks,
+                              icon: const Icon(Icons.download, size: 18),
+                              label: const Text('Download Album'),
+                            ),
+                        ],
+                      ),
+                    ] else ...[
+                      // Desktop Header Layout
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: ZephyrColors.primary.withValues(alpha: 0.35),
+                                  blurRadius: 28,
+                                  spreadRadius: 2,
+                                ),
+                              ],
+                            ),
+                            child: CoverImage(
+                              coverUrl: _album!.coverUrl,
+                              size: 200,
+                              borderRadius: 12,
+                            ),
+                          ),
+                          const SizedBox(width: 24),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: ZephyrColors.primary.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: ZephyrColors.primary.withValues(alpha: 0.4)),
+                                  ),
+                                  child: Text(
+                                    _album!.displayBadge.toUpperCase(),
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: ZephyrColors.primary,
+                                      letterSpacing: 0.8,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _album!.name,
+                                  style: const TextStyle(
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.bold,
+                                    color: ZephyrColors.text,
+                                    letterSpacing: -1,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Wrap(
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  children: [
+                                    const Icon(Icons.person, size: 16, color: ZephyrColors.primary),
+                                    Text(
+                                      _album!.artists.join(', '),
+                                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                    ),
+                                    if (_album!.year != null) ...[
+                                      const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                                      Text(
+                                        '${_album!.year}',
+                                        style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+                                      ),
+                                    ],
+                                    const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                                    Text(
+                                      '${_album!.trackCount ?? tracks.length} songs',
+                                      style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+                                    ),
+                                    if (_album!.downloadedCount != null && _album!.downloadedCount! > 0) ...[
+                                      const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                                      Text(
+                                        '${_album!.downloadedCount} downloaded',
+                                        style: const TextStyle(color: ZephyrTheme.accentSuccess, fontSize: 14, fontWeight: FontWeight.w600),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 20),
+                                if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_'))
+                                  ElevatedButton.icon(
+                                    style: ZephyrTheme.primaryPillStyle(),
+                                    onPressed: _downloadAllTracks,
+                                    icon: const Icon(Icons.download, size: 18),
+                                    label: const Text('Download Album'),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 28),
+
+                    // Tracks List Header
+                    if (!isMobile)
+                      const Row(
+                        children: [
+                          SizedBox(width: 64, child: Text('#', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
+                          Expanded(child: Text('TITLE', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
+                          Text('ACTIONS', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold)),
+                          SizedBox(width: 100),
+                        ],
+                      ),
+                    if (!isMobile)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Divider(color: ZephyrColors.bgLight),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Virtualized Album Tracks List
+            if (tracks.isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 32, vertical: 24),
+                  child: const Text('No tracks found in this album.', style: TextStyle(color: ZephyrColors.textDim)),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 32),
+                sliver: SliverList.builder(
+                  itemCount: tracks.length,
+                  itemBuilder: (context, index) {
+                    final track = tracks[index];
+                    final enrichedTrack = track.copyWith(
+                      coverUrl: track.coverUrl ?? _album!.coverUrl,
+                      album: track.album ?? _album!.name,
+                      albumId: track.albumId ?? _album!.id,
+                    );
+
+                    return Row(
+                      children: [
+                        if (!isMobile)
+                          SizedBox(
+                            width: 32,
+                            child: Text(
+                              '${index + 1}',
                               style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
                             ),
-                            if (_album!.downloadedCount != null && _album!.downloadedCount! > 0) ...[
-                              const SizedBox(width: 12),
-                              const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
-                              const SizedBox(width: 12),
-                              Text(
-                                '${_album!.downloadedCount} downloaded',
-                                style: const TextStyle(color: ZephyrColors.success, fontSize: 14, fontWeight: FontWeight.w600),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 20),
-                        if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_'))
-                          ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: ZephyrColors.primary,
-                              foregroundColor: Colors.black,
-                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                            ),
-                            onPressed: _downloadAllTracks,
-                            icon: const Icon(Icons.download, size: 18),
-                            label: const Text('Download Album', style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
+                        Expanded(
+                          child: TrackTile(
+                            track: enrichedTrack,
+                            queue: tracks.map((t) => t.copyWith(
+                              coverUrl: t.coverUrl ?? _album!.coverUrl,
+                              album: t.album ?? _album!.name,
+                              albumId: t.albumId ?? _album!.id,
+                            )).toList(),
+                          ),
+                        ),
                       ],
-                    ),
-                  ),
-                ],
+                    );
+                  },
+                ),
               ),
-              const SizedBox(height: 40),
-
-              // Tracks List Header
-              const Row(
-                children: [
-                  SizedBox(width: 64, child: Text('#', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
-                  Expanded(child: Text('TITLE', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
-                  Text('ACTIONS', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold)),
-                  SizedBox(width: 100),
-                ],
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8.0),
-                child: Divider(color: ZephyrColors.bgLight),
-              ),
-
-              // Tracks List
-              tracks.isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.all(24.0),
-                      child: Text('No tracks found in this album.', style: TextStyle(color: ZephyrColors.textDim)),
-                    )
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: tracks.length,
-                      itemBuilder: (context, index) {
-                        final track = tracks[index];
-                        // Enrich track with album cover if needed
-                        final enrichedTrack = track.copyWith(
-                          coverUrl: track.coverUrl ?? _album!.coverUrl,
-                          album: track.album ?? _album!.name,
-                          albumId: track.albumId ?? _album!.id,
-                        );
-
-                        return Row(
-                          children: [
-                            SizedBox(
-                              width: 32,
-                              child: Text(
-                                '${index + 1}',
-                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
-                              ),
-                            ),
-                            Expanded(
-                              child: TrackTile(
-                                track: enrichedTrack,
-                                queue: tracks.map((t) => t.copyWith(
-                                  coverUrl: t.coverUrl ?? _album!.coverUrl,
-                                  album: t.album ?? _album!.name,
-                                  albumId: t.albumId ?? _album!.id,
-                                )).toList(),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-            ],
-          ),
+            const SliverPadding(padding: EdgeInsets.only(bottom: 120)),
+          ],
         ),
       ),
     );

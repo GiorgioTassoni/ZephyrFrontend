@@ -6,8 +6,10 @@ import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../providers/library_provider.dart';
 import '../providers/navigation_provider.dart';
+import '../providers/offline_provider.dart';
 import '../providers/player_provider.dart';
 import '../theme/colors.dart';
+import '../theme/zephyr_theme.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/track_tile.dart';
 import '../widgets/toast.dart';
@@ -55,11 +57,45 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     }
   }
 
+  void _playAllTracks() {
+    if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
+    ref.read(playerProvider.notifier).playTrack(_playlist!.tracks!.first, _playlist!.tracks!);
+  }
+
+  void _shufflePlayAllTracks() {
+    if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
+    final list = List<Track>.from(_playlist!.tracks!)..shuffle();
+    ref.read(playerProvider.notifier).playTrack(list.first, list);
+  }
+
+  bool _isDownloadingPlaylist = false;
+
+  Future<void> _downloadPlaylist() async {
+    if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
+    final tracks = _playlist!.tracks!;
+    setState(() => _isDownloadingPlaylist = true);
+    try {
+      ZephyrToast.show(context, 'Downloading "${_playlist!.name}" to this device...');
+      await ref.read(offlineDownloadsProvider.notifier).downloadBatch(tracks);
+      if (mounted) {
+        ZephyrToast.show(context, 'Playlist "${_playlist!.name}" downloaded to device!');
+      }
+    } catch (e) {
+      if (mounted) {
+        ZephyrToast.show(context, 'Failed to download playlist: $e', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isDownloadingPlaylist = false);
+      }
+    }
+  }
+
   Future<void> _pickAndUploadCover() async {
     if (_playlist == null) return;
     if (_playlist!.id.toString().startsWith('dz_')) return;
     try {
-      final result = await FilePicker.pickFiles(
+      final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
       );
@@ -73,8 +109,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         await _fetchPlaylistDetails();
       }
     } catch (e) {
-      ZephyrToast.show(context, 'Failed to upload cover: $e', isError: true);
-      setState(() {
+      if (mounted) ZephyrToast.show(context, 'Failed to upload cover: $e', isError: true);
+      if (mounted) setState(() {
         _isLoading = false;
       });
     }
@@ -182,9 +218,9 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     try {
       await ref.read(libraryProvider.notifier).removeTrackFromPlaylist(_playlist!.id, trackId);
       await _fetchPlaylistDetails();
-      ZephyrToast.show(context, 'Song removed from playlist');
+      if (mounted) ZephyrToast.show(context, 'Song removed from playlist');
     } catch (e) {
-      ZephyrToast.show(context, 'Failed to remove: $e', isError: true);
+      if (mounted) ZephyrToast.show(context, 'Failed to remove: $e', isError: true);
     }
   }
 
@@ -217,6 +253,10 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
     final tracks = _playlist!.tracks ?? [];
     final isRemote = _playlist!.id.toString().startsWith('dz_');
+    final isMobile = MediaQuery.of(context).size.width < 700;
+    final offlineState = ref.watch(offlineDownloadsProvider);
+    final bool allTracksDownloaded = tracks.isNotEmpty &&
+        tracks.every((t) => offlineState.isDownloaded(t.videoId));
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
@@ -224,262 +264,466 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         onRefresh: _fetchPlaylistDetails,
         color: ZephyrColors.primary,
         backgroundColor: ZephyrColors.bgCard,
-        child: SingleChildScrollView(
+        child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header Details
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  GestureDetector(
-                    onTap: isRemote ? null : _pickAndUploadCover,
-                    child: MouseRegion(
-                      cursor: isRemote ? SystemMouseCursors.basic : SystemMouseCursors.click,
-                      onEnter: (_) => setState(() => _isCoverHovered = !isRemote),
-                      onExit: (_) => setState(() => _isCoverHovered = false),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          CoverImage(
-                            coverUrl: _playlist!.coverUrl,
-                            playlistId: isRemote ? null : _playlist!.id,
-                            updatedAt: _playlist!.updatedAt,
-                            size: 200,
-                            borderRadius: 12,
-                          ),
-                          if (_isCoverHovered && !isRemote)
-                            Container(
-                              width: 200,
-                              height: 200,
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.4),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Icon(
-                                Icons.camera_alt,
-                                color: Colors.white,
-                                size: 40,
-                              ),
+          slivers: [
+            // Playlist Header and Action Buttons
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 16 : 32,
+                  vertical: isMobile ? 16 : 32,
+                ),
+                child: Column(
+                  crossAxisAlignment: isMobile ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+                  children: [
+                    if (isMobile) ...[
+                      Center(
+                        child: GestureDetector(
+                          onTap: isRemote ? null : _pickAndUploadCover,
+                          child: MouseRegion(
+                            cursor: isRemote ? SystemMouseCursors.basic : SystemMouseCursors.click,
+                            onEnter: (_) => setState(() => _isCoverHovered = !isRemote),
+                            onExit: (_) => setState(() => _isCoverHovered = false),
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                CoverImage(
+                                  coverUrl: _playlist!.coverUrl,
+                                  playlistId: isRemote ? null : _playlist!.id,
+                                  updatedAt: _playlist!.updatedAt,
+                                  size: 180,
+                                  borderRadius: 12,
+                                ),
+                                if (_isCoverHovered && !isRemote)
+                                  Container(
+                                    width: 180,
+                                    height: 180,
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.4),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Center(
+                                      child: Icon(
+                                        Icons.camera_alt_outlined,
+                                        color: Colors.white,
+                                        size: 40,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                        ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 24),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          isRemote ? 'DEEZER PLAYLIST' : 'PLAYLIST',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                            color: ZephyrColors.textDim,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _playlist!.name,
-                          style: const TextStyle(
-                            fontSize: 36,
-                            fontWeight: FontWeight.bold,
-                            color: ZephyrColors.text,
-                            letterSpacing: -1,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _playlist!.description ?? (_playlist!.ownerName != null ? 'By ${_playlist!.ownerName}' : 'No description'),
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: ZephyrColors.textDim,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Icon(
-                              _playlist!.isPublic ? Icons.public : Icons.lock_outline,
-                              size: 16,
+                      const SizedBox(height: 16),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            'PLAYLIST',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.2,
                               color: ZephyrColors.textDim,
                             ),
-                            const SizedBox(width: 6),
-                            Text(
-                              isRemote ? 'Deezer Browse' : (_playlist!.isPublic ? 'Public Playlist' : 'Private Playlist'),
-                              style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _playlist!.name,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: ZephyrColors.text,
+                              letterSpacing: -0.5,
                             ),
-                            const SizedBox(width: 12),
-                            const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
-                            const SizedBox(width: 12),
-                            Text(
-                              '${_playlist!.trackCount ?? tracks.length} songs',
-                              style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _playlist!.description ?? (_playlist!.ownerName != null ? 'By ${_playlist!.ownerName}' : 'No description'),
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: ZephyrColors.textDim,
                             ),
-                            if (_playlist!.downloadedCount != null && _playlist!.downloadedCount! > 0) ...[
-                              const SizedBox(width: 12),
-                              const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
-                              const SizedBox(width: 12),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              Icon(
+                                _playlist!.isPublic ? Icons.public : Icons.lock_outline,
+                                size: 16,
+                                color: ZephyrColors.textDim,
+                              ),
                               Text(
-                                '${_playlist!.downloadedCount} downloaded',
-                                style: const TextStyle(color: ZephyrColors.success, fontSize: 13, fontWeight: FontWeight.w600),
+                                isRemote ? 'Deezer Browse' : (_playlist!.isPublic ? 'Public Playlist' : 'Private Playlist'),
+                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                              ),
+                              const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                              Text(
+                                '${tracks.length} songs',
+                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                               ),
                             ],
-                          ],
-                        ),
-                        const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: ZephyrColors.primary,
-                                foregroundColor: Colors.black,
-                              ),
-                              onPressed: () {
-                                if (tracks.isNotEmpty) {
-                                  ref.read(playerProvider.notifier).playTrack(tracks.first, tracks);
-                                }
-                              },
-                              icon: const Icon(Icons.play_arrow),
-                              label: const Text('Play'),
-                            ),
-                            if (!isRemote) ...[
-                              const SizedBox(width: 12),
-                              OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: ZephyrColors.text,
-                                  side: const BorderSide(color: ZephyrColors.bgLight),
-                                ),
-                                onPressed: _showEditDetailsDialog,
-                                icon: const Icon(Icons.edit, size: 16),
-                                label: const Text('Edit Info'),
-                              ),
-                              const SizedBox(width: 12),
-                              OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: ZephyrColors.text,
-                                  side: const BorderSide(color: ZephyrColors.bgLight),
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _isReorderingMode = !_isReorderingMode;
-                                  });
-                                },
-                                icon: Icon(
-                                  _isReorderingMode ? Icons.check : Icons.swap_vert,
-                                  size: 16,
-                                ),
-                                label: Text(_isReorderingMode ? 'Done Reordering' : 'Reorder Songs'),
+                          ),
+                          const SizedBox(height: 20),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              ElevatedButton.icon(
+                                style: ZephyrTheme.primaryPillStyle(),
+                                onPressed: tracks.isEmpty ? null : _playAllTracks,
+                                icon: const Icon(Icons.play_arrow_rounded, size: 22, color: Colors.black),
+                                label: const Text('Play All', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                               ),
                               const SizedBox(width: 12),
                               IconButton(
-                                icon: const Icon(Icons.delete_outline, color: ZephyrColors.error),
-                                onPressed: _deletePlaylist,
-                                tooltip: 'Delete Playlist',
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 40),
-
-              // Tracks List Header
-              const Row(
-                children: [
-                  SizedBox(width: 32),
-                  SizedBox(width: 64, child: Text('#', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
-                  Expanded(child: Text('TITLE', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
-                  Text('ACTIONS', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold)),
-                  SizedBox(width: 100),
-                ],
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8.0),
-                child: Divider(color: ZephyrColors.bgLight),
-              ),
-
-              // Tracks List
-              tracks.isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.all(24.0),
-                      child: Text('No tracks in this playlist yet. Add songs using search!', style: TextStyle(color: ZephyrColors.textDim)),
-                    )
-                  : _isReorderingMode
-                      ? ReorderableListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: tracks.length,
-                          onReorder: (oldIndex, newIndex) async {
-                            if (newIndex > oldIndex) {
-                              newIndex -= 1;
-                            }
-                            final list = List<Track>.from(tracks);
-                            final item = list.removeAt(oldIndex);
-                            list.insert(newIndex, item);
-                            
-                            // Call API to save reorder
-                            final newIds = list.map((t) => t.videoId).toList();
-                            await ref.read(libraryProvider.notifier).reorderPlaylistTracks(_playlist!.id, newIds);
-                            await _fetchPlaylistDetails();
-                          },
-                          itemBuilder: (context, index) {
-                            final track = tracks[index];
-                            return ReorderableDragStartListener(
-                              key: ValueKey(track.videoId),
-                              index: index,
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.drag_handle, color: ZephyrColors.textDim),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: TrackTile(
-                                      track: track,
-                                      queue: tracks,
-                                      onRemoveFromPlaylist: () => _removeTrack(track.videoId),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        )
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: tracks.length,
-                          itemBuilder: (context, index) {
-                            final track = tracks[index];
-                            return Row(
-                              children: [
-                                const SizedBox(width: 32),
-                                SizedBox(
-                                  width: 32,
-                                  child: Text(
-                                    '${index + 1}',
-                                    style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
-                                  ),
+                                style: IconButton.styleFrom(
+                                  backgroundColor: ZephyrColors.primary.withValues(alpha: 0.15),
+                                  foregroundColor: ZephyrColors.primary,
+                                  padding: const EdgeInsets.all(10),
                                 ),
-                                Expanded(
-                                  child: TrackTile(
-                                    track: track,
-                                    queue: tracks,
-                                    onRemoveFromPlaylist: () => _removeTrack(track.videoId),
+                                icon: const Icon(Icons.shuffle_rounded, size: 20),
+                                onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
+                                tooltip: 'Shuffle Play',
+                              ),
+                              if (!isRemote) ...[
+                                const SizedBox(width: 12),
+                                IconButton(
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: allTracksDownloaded
+                                        ? ZephyrColors.success.withValues(alpha: 0.15)
+                                        : ZephyrColors.primary.withValues(alpha: 0.15),
+                                    foregroundColor: allTracksDownloaded
+                                        ? ZephyrColors.success
+                                        : ZephyrColors.primary,
+                                    padding: const EdgeInsets.all(10),
                                   ),
+                                  icon: _isDownloadingPlaylist
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(strokeWidth: 2, color: ZephyrColors.primary),
+                                        )
+                                      : Icon(
+                                          allTracksDownloaded ? Icons.check_circle_rounded : Icons.download_rounded,
+                                          size: 20,
+                                        ),
+                                  onPressed: _isDownloadingPlaylist ? null : _downloadPlaylist,
+                                  tooltip: allTracksDownloaded
+                                      ? 'All tracks downloaded to this device'
+                                      : 'Download Playlist to this device',
                                 ),
                               ],
-                            );
-                          },
+                            ],
+                          ),
+                        ],
+                      ),
+                    ] else ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          GestureDetector(
+                            onTap: isRemote ? null : _pickAndUploadCover,
+                            child: MouseRegion(
+                              cursor: isRemote ? SystemMouseCursors.basic : SystemMouseCursors.click,
+                              onEnter: (_) => setState(() => _isCoverHovered = !isRemote),
+                              onExit: (_) => setState(() => _isCoverHovered = false),
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  CoverImage(
+                                    coverUrl: _playlist!.coverUrl,
+                                    playlistId: isRemote ? null : _playlist!.id,
+                                    updatedAt: _playlist!.updatedAt,
+                                    size: 200,
+                                    borderRadius: 12,
+                                  ),
+                                  if (_isCoverHovered && !isRemote)
+                                    Container(
+                                      width: 200,
+                                      height: 200,
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(alpha: 0.4),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Icon(
+                                        Icons.camera_alt,
+                                        color: Colors.white,
+                                        size: 40,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 24),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isRemote ? 'DEEZER PLAYLIST' : 'PLAYLIST',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.2,
+                                    color: ZephyrColors.textDim,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _playlist!.name,
+                                  style: const TextStyle(
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.bold,
+                                    color: ZephyrColors.text,
+                                    letterSpacing: -1,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _playlist!.description ?? (_playlist!.ownerName != null ? 'By ${_playlist!.ownerName}' : 'No description'),
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    color: ZephyrColors.textDim,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      _playlist!.isPublic ? Icons.public : Icons.lock_outline,
+                                      size: 16,
+                                      color: ZephyrColors.textDim,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      isRemote ? 'Deezer Browse' : (_playlist!.isPublic ? 'Public Playlist' : 'Private Playlist'),
+                                      style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      '${tracks.length} songs',
+                                      style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 20),
+                                Row(
+                                  children: [
+                                    ElevatedButton.icon(
+                                      style: ZephyrTheme.primaryPillStyle(),
+                                      onPressed: tracks.isEmpty ? null : _playAllTracks,
+                                      icon: const Icon(Icons.play_arrow_rounded, size: 22, color: Colors.black),
+                                      label: const Text('Play All', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    IconButton(
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: ZephyrColors.primary.withValues(alpha: 0.15),
+                                        foregroundColor: ZephyrColors.primary,
+                                        padding: const EdgeInsets.all(10),
+                                      ),
+                                      icon: const Icon(Icons.shuffle_rounded, size: 20),
+                                      onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
+                                      tooltip: 'Shuffle Play',
+                                    ),
+                                    if (!isRemote) ...[
+                                      const SizedBox(width: 12),
+                                      IconButton(
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: allTracksDownloaded
+                                              ? ZephyrColors.success.withValues(alpha: 0.15)
+                                              : ZephyrColors.primary.withValues(alpha: 0.15),
+                                          foregroundColor: allTracksDownloaded
+                                              ? ZephyrColors.success
+                                              : ZephyrColors.primary,
+                                          padding: const EdgeInsets.all(10),
+                                        ),
+                                        icon: _isDownloadingPlaylist
+                                            ? const SizedBox(
+                                                width: 18,
+                                                height: 18,
+                                                child: CircularProgressIndicator(strokeWidth: 2, color: ZephyrColors.primary),
+                                              )
+                                            : Icon(
+                                                allTracksDownloaded ? Icons.check_circle_rounded : Icons.download_rounded,
+                                                size: 20,
+                                              ),
+                                        onPressed: _isDownloadingPlaylist ? null : _downloadPlaylist,
+                                        tooltip: allTracksDownloaded
+                                            ? 'All tracks downloaded to this device'
+                                            : 'Download Playlist to this device',
+                                      ),
+                                      const SizedBox(width: 12),
+                                      PopupMenuButton<String>(
+                                        icon: const Icon(Icons.more_vert_rounded, color: ZephyrColors.textDim),
+                                        color: ZephyrColors.bgCard,
+                                        tooltip: 'Playlist Options',
+                                        onSelected: (val) {
+                                          if (val == 'edit') {
+                                            _showEditDetailsDialog();
+                                          } else if (val == 'delete') {
+                                            _deletePlaylist();
+                                          } else if (val == 'reorder') {
+                                            setState(() => _isReorderingMode = !_isReorderingMode);
+                                          }
+                                        },
+                                        itemBuilder: (context) => [
+                                          const PopupMenuItem(
+                                            value: 'edit',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.edit_outlined, size: 20, color: ZephyrColors.textDim),
+                                                SizedBox(width: 8),
+                                                Text('Edit Details'),
+                                              ],
+                                            ),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'reorder',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  _isReorderingMode ? Icons.check : Icons.reorder_rounded,
+                                                  size: 20,
+                                                  color: ZephyrColors.textDim,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text(_isReorderingMode ? 'Done Reordering' : 'Reorder Tracks'),
+                                              ],
+                                            ),
+                                          ),
+                                          const PopupMenuItem(
+                                            value: 'delete',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.delete_outline_rounded, size: 20, color: ZephyrColors.error),
+                                                SizedBox(width: 8),
+                                                Text('Delete Playlist', style: TextStyle(color: ZephyrColors.error)),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 28),
+
+                    // Tracks List Header
+                    if (!isMobile)
+                      const Row(
+                        children: [
+                          SizedBox(width: 32),
+                          SizedBox(width: 64, child: Text('#', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
+                          Expanded(child: Text('TITLE', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold))),
+                          Text('ACTIONS', style: TextStyle(color: ZephyrColors.textMuted, fontWeight: FontWeight.bold)),
+                          SizedBox(width: 100),
+                        ],
+                      ),
+                    if (!isMobile)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Divider(color: ZephyrColors.bgLight),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Virtualized Tracks List
+            if (tracks.isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 32, vertical: 24),
+                  child: const Text('No tracks in this playlist yet. Add songs using search!', style: TextStyle(color: ZephyrColors.textDim)),
+                ),
+              )
+            else if (_isReorderingMode)
+              SliverPadding(
+                padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 32),
+                sliver: SliverReorderableList(
+                  itemCount: tracks.length,
+                  onReorder: (oldIndex, newIndex) async {
+                    if (newIndex > oldIndex) {
+                      newIndex -= 1;
+                    }
+                    final list = List<Track>.from(tracks);
+                    final item = list.removeAt(oldIndex);
+                    list.insert(newIndex, item);
+
+                    final newIds = list.map((t) => t.videoId).toList();
+                    await ref.read(libraryProvider.notifier).reorderPlaylistTracks(_playlist!.id, newIds);
+                    await _fetchPlaylistDetails();
+                  },
+                  itemBuilder: (context, index) {
+                    final track = tracks[index];
+                    return ReorderableDragStartListener(
+                      key: ValueKey(track.videoId),
+                      index: index,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.drag_handle, color: ZephyrColors.textDim),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TrackTile(
+                              track: track,
+                              queue: tracks,
+                              onRemoveFromPlaylist: () => _removeTrack(track.videoId),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 32),
+                sliver: SliverList.builder(
+                  itemCount: tracks.length,
+                  itemBuilder: (context, index) {
+                    final track = tracks[index];
+                    return Row(
+                      children: [
+                        if (!isMobile) ...[
+                          const SizedBox(width: 32),
+                          SizedBox(
+                            width: 32,
+                            child: Text(
+                              '${index + 1}',
+                              style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+                            ),
+                          ),
+                        ],
+                        Expanded(
+                          child: TrackTile(
+                            track: track,
+                            queue: tracks,
+                            onRemoveFromPlaylist: () => _removeTrack(track.videoId),
+                          ),
                         ),
-            ],
-          ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            const SliverPadding(padding: EdgeInsets.only(bottom: 120)),
+          ],
         ),
       ),
     );

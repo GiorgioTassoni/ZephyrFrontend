@@ -73,9 +73,16 @@ class ArtistLinks extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final baseStyle = style ?? const TextStyle(fontSize: 12, color: ZephyrColors.textDim);
     final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
+    final artistDisplayString = validArtists.isNotEmpty ? validArtists.join(', ') : 'Unknown Artist';
 
-    if (validArtists.isEmpty) {
-      return Text('Unknown Artist', style: baseStyle, maxLines: maxLines, overflow: overflow);
+    final isMobile = MediaQuery.of(context).size.width < 700;
+    if (isMobile || validArtists.isEmpty) {
+      return Text(
+        artistDisplayString,
+        style: baseStyle,
+        maxLines: maxLines,
+        overflow: overflow,
+      );
     }
 
     final children = <InlineSpan>[];

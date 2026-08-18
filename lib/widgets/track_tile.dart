@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/library_provider.dart';
@@ -7,12 +8,14 @@ import '../api/zephyr_api.dart';
 import '../theme/colors.dart';
 import '../providers/auth_provider.dart';
 import '../providers/navigation_provider.dart';
+import '../providers/offline_provider.dart';
 import 'track_metadata_editor_dialog.dart';
 import 'share_dialog.dart';
 import 'cover_image.dart';
 import 'artist_links.dart';
 import 'favorite_button.dart';
 import 'resolution_candidate_modal.dart';
+import 'unresolved_track_modal.dart';
 import 'toast.dart';
 
 class TrackTile extends ConsumerStatefulWidget {
@@ -20,6 +23,10 @@ class TrackTile extends ConsumerStatefulWidget {
   final List<Track> queue;
   final VoidCallback? onRemoveFromPlaylist;
   final Widget? trailing;
+  final bool showFavoriteButton;
+  final bool showDownloadIndicator;
+  final EdgeInsetsGeometry? contentPadding;
+  final String? origin;
 
   const TrackTile({
     super.key,
@@ -27,6 +34,10 @@ class TrackTile extends ConsumerStatefulWidget {
     required this.queue,
     this.onRemoveFromPlaylist,
     this.trailing,
+    this.showFavoriteButton = true,
+    this.showDownloadIndicator = true,
+    this.contentPadding,
+    this.origin,
   });
 
   @override
@@ -34,207 +45,206 @@ class TrackTile extends ConsumerStatefulWidget {
 }
 
 class _TrackTileState extends ConsumerState<TrackTile> {
-  bool _isHovered = false;
-
   @override
   Widget build(BuildContext context) {
     final playerState = ref.watch(playerProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
-    final libraryState = ref.watch(libraryProvider);
     final libraryNotifier = ref.read(libraryProvider.notifier);
     final isCurrent = playerState.currentTrack?.videoId == widget.track.videoId;
     final isFav = libraryNotifier.isFavorite(widget.track.videoId, title: widget.track.title);
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: GestureDetector(
-        onSecondaryTapDown: (details) {
-          _showRightClickMenu(context, ref, details.globalPosition);
-        },
-        child: Material(
-          color: isCurrent
-              ? ZephyrColors.bgLight.withValues(alpha: 0.5)
-              : (_isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.3) : Colors.transparent),
-          borderRadius: BorderRadius.circular(8),
-          clipBehavior: Clip.antiAlias,
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            leading: Stack(
-              alignment: Alignment.center,
-              children: [
-                CoverImage(
-                  videoId: widget.track.videoId,
-                  coverUrl: widget.track.coverUrl,
-                  size: 48,
-                ),
-                if (_isHovered || isCurrent)
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: IconButton(
-                      icon: Icon(
-                        isCurrent && playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-                        color: ZephyrColors.primary,
-                        size: 24,
-                      ),
-                      onPressed: () {
-                        if (isCurrent) {
-                          playerNotifier.togglePlayPause();
-                        } else {
-                          playerNotifier.playTrack(widget.track, widget.queue);
-                        }
-                      },
-                    ),
-                  ),
-              ],
-            ),
-            title: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: isCurrent ? ZephyrColors.primary : ZephyrColors.text,
-                    ),
+    final tile = GestureDetector(
+      onSecondaryTapDown: (details) {
+        _showRightClickMenu(context, ref, details.globalPosition);
+      },
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          contentPadding: widget.contentPadding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          leading: CoverImage(
+            videoId: widget.track.videoId,
+            coverUrl: widget.track.coverUrl,
+            size: 48,
+          ),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.track.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: isCurrent ? ZephyrColors.primary : ZephyrColors.text,
                   ),
                 ),
-                if (widget.track.isVideoVersion) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.purple.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.4)),
-                    ),
-                    child: const Text(
-                      'VIDEO',
-                      style: TextStyle(
-                        color: Colors.purpleAccent,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            subtitle: ArtistLinks(
-              track: widget.track,
-              style: const TextStyle(
-                color: ZephyrColors.textDim,
-                fontSize: 12,
               ),
+              if (widget.track.reason != null && widget.track.reason!.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                _buildReasonBadge(widget.track.reason!),
+              ],
+              if (widget.track.isVideoVersion) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.purpleAccent.withValues(alpha: 0.4)),
+                  ),
+                  child: const Text(
+                    'VIDEO',
+                    style: TextStyle(
+                      color: Colors.purpleAccent,
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          subtitle: ArtistLinks(
+            track: widget.track,
+            style: const TextStyle(
+              color: ZephyrColors.textDim,
+              fontSize: 12,
             ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildDownloadIndicator(context, ref),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.showDownloadIndicator) _buildDownloadIndicator(context, ref),
+              if (widget.showFavoriteButton)
                 FavoriteButton(
                   isFavorite: isFav,
                   size: 20,
                   onTap: () => libraryNotifier.toggleFavorite(widget.track),
                 ),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim),
-                  color: ZephyrColors.bgCard,
-                  onSelected: (value) => _handleMenuSelection(context, ref, value),
-                  itemBuilder: (context) {
-                    return [
-                      if (widget.track.videoId.startsWith('dz_') && !widget.track.downloadStatus.startsWith('downloading'))
-                        const PopupMenuItem(
-                          value: 'reopen_resolution',
-                          child: Row(
-                            children: [
-                              Icon(Icons.sync_problem_rounded, size: 20, color: ZephyrColors.warning),
-                              SizedBox(width: 8),
-                              Text('Report wrong match'),
-                            ],
-                          ),
-                        ),
-                      if (widget.track.needsResolution)
-                        const PopupMenuItem(
-                          value: 'resolve_track',
-                          child: Row(
-                            children: [
-                              Icon(Icons.find_in_page_rounded, size: 20, color: Colors.amberAccent),
-                              SizedBox(width: 8),
-                              Text('Select match'),
-                            ],
-                          ),
-                        ),
-                      const PopupMenuItem(
-                        value: 'add_to_playlist',
-                        child: Row(
-                          children: [
-                            Icon(Icons.playlist_add, size: 20, color: ZephyrColors.textDim),
-                            SizedBox(width: 8),
-                            Text('Add to Playlist'),
-                          ],
-                        ),
-                      ),
-                      if (widget.onRemoveFromPlaylist != null)
-                        const PopupMenuItem(
-                          value: 'remove_from_playlist',
-                          child: Row(
-                            children: [
-                              Icon(Icons.playlist_remove, size: 20, color: ZephyrColors.error),
-                              SizedBox(width: 8),
-                              Text('Remove from Playlist', style: TextStyle(color: ZephyrColors.error)),
-                            ],
-                          ),
-                        ),
-                      const PopupMenuItem(
-                        value: 'force_download',
-                        child: Row(
-                          children: [
-                            Icon(Icons.download, size: 20, color: ZephyrColors.textDim),
-                            SizedBox(width: 8),
-                            Text('Queue Download'),
-                          ],
-                        ),
-                      ),
-                      for (int i = 0; i < widget.track.artists.length; i++)
-                        if (widget.track.artistsIds.length > i && widget.track.artistsIds[i].isNotEmpty)
-                          PopupMenuItem(
-                            value: 'go_to_artist_${widget.track.artistsIds[i]}',
-                            child: Row(
-                              children: [
-                                const Icon(Icons.person, size: 20, color: ZephyrColors.textDim),
-                                const SizedBox(width: 8),
-                                Text('Go to ${widget.track.artists[i]}'),
-                              ],
-                            ),
-                          ),
-                    ];
-                  },
-                ),
-              ],
-            ),
-            onTap: () {
-              playerNotifier.playTrack(widget.track, widget.queue);
-            },
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim),
+                color: ZephyrColors.bgCard,
+                onSelected: (value) => _handleMenuSelection(context, ref, value),
+                itemBuilder: (context) => _buildTrackMenuItems(context, ref),
+              ),
+            ],
           ),
+          onTap: () {
+            if (isCurrent) {
+              playerNotifier.togglePlayPause();
+            } else {
+              _playTrackWithResolution(context, ref);
+            }
+          },
+        ),
+      ),
+    );
+
+    return Dismissible(
+      key: ValueKey('swipe_queue_${widget.track.videoId}_${widget.track.hashCode}'),
+      direction: DismissDirection.startToEnd,
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          playerNotifier.addToQueue(widget.track);
+          HapticFeedback.mediumImpact();
+          ZephyrToast.show(context, 'Added "${widget.track.title}" to queue');
+        }
+        return false; // Prevent removing tile from the list
+      },
+      background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 20),
+        decoration: BoxDecoration(
+          color: ZephyrColors.primary.withValues(alpha: 0.85),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.queue_music, color: Colors.black, size: 24),
+            SizedBox(width: 8),
+            Text(
+              'Add to Queue',
+              style: TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+      child: tile,
+    );
+  }
+
+  Widget _buildReasonBadge(String reason) {
+    String label = '';
+    Color color = ZephyrColors.primary;
+    if (reason == 'same_album') {
+      label = 'SAME ALBUM';
+      color = Colors.blueAccent;
+    } else if (reason == 'same_artist') {
+      label = 'SAME ARTIST';
+      color = Colors.amber;
+    } else if (reason == 'similar_artist') {
+      label = 'RADIO';
+      color = ZephyrColors.primary;
+    } else {
+      label = reason.toUpperCase();
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 9,
+          fontWeight: FontWeight.bold,
         ),
       ),
     );
   }
 
   Widget _buildDownloadIndicator(BuildContext context, WidgetRef ref) {
+    final offlineState = ref.watch(offlineDownloadsProvider);
+    final isLocal = offlineState.isDownloaded(widget.track.videoId);
+    final isDownloadingLocal = offlineState.isDownloading(widget.track.videoId);
+    final progress = offlineState.getProgress(widget.track.videoId);
+
+    if (isLocal) {
+      return IconButton(
+        icon: const Icon(Icons.check_circle_rounded, color: ZephyrColors.success, size: 18),
+        tooltip: 'Downloaded to device (Tap to remove)',
+        onPressed: () => _confirmRemoveLocalDownload(context, ref),
+      );
+    }
+
+    if (isDownloadingLocal) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(
+            value: (progress != null && progress > 0) ? progress : null,
+            strokeWidth: 2,
+            valueColor: const AlwaysStoppedAnimation<Color>(ZephyrColors.primary),
+          ),
+        ),
+      );
+    }
+
+    final isServerDownloaded = widget.track.downloadStatus == 'completed' || widget.track.isDownloaded;
+
     switch (widget.track.downloadStatus) {
-      case 'completed':
-        return const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 8.0),
-          child: Icon(Icons.check_circle, color: ZephyrColors.success, size: 18),
-        );
       case 'pending':
       case 'downloading':
         return const Padding(
@@ -266,35 +276,84 @@ class _TrackTileState extends ConsumerState<TrackTile> {
         return IconButton(
           icon: const Icon(Icons.error_outline, color: ZephyrColors.error, size: 18),
           onPressed: () {
-            ZephyrToast.show(context, 'Download failed. Tap context menu to retry.', isError: true);
+            ZephyrToast.show(context, 'Download failed. Tap to retry.', isError: true);
+            _startDownload(context, ref);
           },
         );
       default:
         return IconButton(
-          icon: const Icon(Icons.download_for_offline_outlined, color: ZephyrColors.textDim, size: 18),
+          icon: Icon(
+            Icons.download_for_offline_outlined,
+            color: isServerDownloaded ? ZephyrColors.textDim : ZephyrColors.textMuted,
+            size: 18,
+          ),
+          tooltip: 'Download to this device',
           onPressed: () => _startDownload(context, ref),
         );
     }
   }
 
+  Future<void> _confirmRemoveLocalDownload(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ZephyrColors.bgCard,
+        title: const Text('Remove Download'),
+        content: Text('Remove "${widget.track.title}" from this device?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: ZephyrColors.textDim)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: ZephyrColors.error),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      await ref.read(offlineDownloadsProvider.notifier).removeDownload(widget.track.videoId);
+      if (context.mounted) {
+        ZephyrToast.show(context, 'Removed from this device');
+      }
+    }
+  }
+
   Future<void> _startDownload(BuildContext context, WidgetRef ref) async {
     try {
-      await ZephyrApi().queueDownload(widget.track.videoId);
+      ZephyrToast.show(context, 'Downloading "${widget.track.title}" to device...');
+      await ref.read(offlineDownloadsProvider.notifier).downloadTrack(widget.track);
       if (context.mounted) {
-        ZephyrToast.show(context, 'Download queued!');
-        ref.read(libraryProvider.notifier).loadLibrary();
+        ZephyrToast.show(context, 'Downloaded to this device!');
       }
     } on ResolutionRequiredException catch (e) {
       if (context.mounted) {
-        final selected = await ResolutionCandidateModal.show(context, e);
+        final selected = await UnresolvedTrackModal.show(
+          context,
+          trackId: e.trackId,
+          title: e.title,
+          artists: e.artists,
+          initialCandidates: e.candidates,
+          initialResolutionId: e.resolutionId,
+        );
         if (selected == true && context.mounted) {
-          ZephyrToast.show(context, 'Selection saved! Download queued.');
-          ref.read(libraryProvider.notifier).loadLibrary();
+          await ref.read(offlineDownloadsProvider.notifier).downloadTrack(widget.track);
         }
       }
     } on TrackUnavailableException catch (e) {
       if (context.mounted) {
-        ZephyrToast.show(context, e.message, isError: true);
+        ZephyrToast.show(context, '${e.message} Opening resolution options...', isError: true);
+        final selected = await UnresolvedTrackModal.show(
+          context,
+          trackId: widget.track.videoId,
+          title: widget.track.title,
+          artists: widget.track.artists,
+        );
+        if (selected == true && context.mounted) {
+          await ref.read(offlineDownloadsProvider.notifier).downloadTrack(widget.track);
+        }
       }
     } on ProviderUnavailableException catch (e) {
       if (context.mounted) {
@@ -302,7 +361,7 @@ class _TrackTileState extends ConsumerState<TrackTile> {
       }
     } catch (e) {
       if (context.mounted) {
-        ZephyrToast.show(context, 'Failed to queue: $e', isError: true);
+        ZephyrToast.show(context, 'Download failed: $e', isError: true);
       }
     }
   }
@@ -312,7 +371,14 @@ class _TrackTileState extends ConsumerState<TrackTile> {
       final data = await ZephyrApi().getTrackResolution(widget.track.videoId);
       if (data != null && context.mounted) {
         final exc = ResolutionRequiredException.fromJson(data);
-        final selected = await ResolutionCandidateModal.show(context, exc);
+        final selected = await UnresolvedTrackModal.show(
+          context,
+          trackId: exc.trackId,
+          title: exc.title,
+          artists: exc.artists,
+          initialCandidates: exc.candidates,
+          initialResolutionId: exc.resolutionId,
+        );
         if (selected == true && context.mounted) {
           ZephyrToast.show(context, 'Selection saved!');
           ref.read(libraryProvider.notifier).loadLibrary();
@@ -333,11 +399,52 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     }
   }
 
+  Future<void> _playTrackWithResolution(BuildContext context, WidgetRef ref) async {
+    final playerNotifier = ref.read(playerProvider.notifier);
+    final playerState = ref.read(playerProvider);
+
+    final bool isSameContext = widget.origin != 'search' &&
+        playerState.queue.isNotEmpty &&
+        playerState.queue.any((t) => t.videoId == widget.track.videoId);
+
+    try {
+      await playerNotifier.playTrack(
+        widget.track,
+        widget.queue,
+        isNewQueue: !isSameContext,
+        origin: widget.origin ?? 'context',
+      );
+    } on ResolutionRequiredException catch (_) {
+      // Handled globally by PlayerNotifier._triggerResolutionModal
+    } on TrackUnavailableException catch (_) {
+      // Handled globally by PlayerNotifier._triggerResolutionModal
+    } on ProviderUnavailableException catch (e) {
+      if (context.mounted) {
+        ZephyrToast.show(context, e.message, isError: true);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ZephyrToast.show(context, 'Playback error: $e', isError: true);
+      }
+    }
+  }
+
   void _handleMenuSelection(BuildContext context, WidgetRef ref, String value) {
-    if (value == 'add_to_playlist') {
+    if (value == 'toggle_favorite') {
+      ref.read(libraryProvider.notifier).toggleFavorite(widget.track);
+      final isNowFav = ref.read(libraryProvider.notifier).isFavorite(widget.track.videoId, title: widget.track.title);
+      ZephyrToast.show(context, isNowFav ? 'Added to favorites' : 'Removed from favorites');
+    } else if (value == 'add_to_queue') {
+      ref.read(playerProvider.notifier).addToQueue(widget.track);
+      ZephyrToast.show(context, 'Added "${widget.track.title}" to queue');
+    } else if (value == 'add_to_playlist') {
       _showAddToPlaylistDialog(context, ref);
     } else if (value == 'remove_from_playlist') {
       widget.onRemoveFromPlaylist?.call();
+    } else if (value == 'go_to_album') {
+      _navigateToAlbum(context, ref);
+    } else if (value == 'share_song') {
+      showShareDialog(context, ref, widget.track);
     } else if (value == 'force_download') {
       _startDownload(context, ref);
     } else if (value == 'reopen_resolution') {
@@ -347,22 +454,92 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     } else if (value.startsWith('go_to_artist_')) {
       final id = value.substring('go_to_artist_'.length);
       ref.read(navigationProvider.notifier).navigateTo(ScreenState(type: ScreenType.artist, id: id));
+    } else if (value == 'edit_metadata') {
+      _editMetadata(context, ref);
+    } else if (value == 'delete_track') {
+      if (context.mounted) _showDeleteConfirmationDialog(context, ref);
+    }
+  }
+
+  Future<void> _navigateToAlbum(BuildContext context, WidgetRef ref) async {
+    final navNotifier = ref.read(navigationProvider.notifier);
+    if (widget.track.albumId != null && widget.track.albumId!.isNotEmpty) {
+      navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: widget.track.albumId!));
+    } else {
+      final query = (widget.track.album != null && widget.track.album!.isNotEmpty)
+          ? '${widget.track.album} ${widget.track.artists.isNotEmpty ? widget.track.artists.first : ''}'.trim()
+          : '${widget.track.title} ${widget.track.artists.isNotEmpty ? widget.track.artists.first : ''}'.trim();
+      try {
+        final searchRes = await ZephyrApi().search(query, remote: true);
+        if (!context.mounted) return;
+        final results = searchRes['results'];
+        List<dynamic> albums = [];
+        if (results is Map && results.containsKey('albums')) {
+          albums = (results['albums'] as List?) ?? [];
+        } else if (searchRes['albums'] is List) {
+          albums = searchRes['albums'] as List;
+        }
+        if (albums.isNotEmpty) {
+          final firstAlbum = albums.first;
+          final id = (firstAlbum['id'] ?? firstAlbum['browse_id'] ?? firstAlbum['browseId'])?.toString();
+          if (id != null && id.isNotEmpty) {
+            final formattedId = id.startsWith('dz_') ? id : 'dz_$id';
+            navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: formattedId));
+            return;
+          }
+        }
+        ZephyrToast.show(context, 'Album not found', isError: true);
+      } catch (_) {
+        if (context.mounted) {
+          ZephyrToast.show(context, 'Could not find album', isError: true);
+        }
+      }
     }
   }
 
   Future<void> _reopenResolution(BuildContext context, WidgetRef ref) async {
     try {
+      final playerState = ref.read(playerProvider);
+      final playerNotifier = ref.read(playerProvider.notifier);
+      final isCurrentActiveTrack = playerState.currentTrack?.videoId == widget.track.videoId;
+
+      playerNotifier.clearResolvedCache(widget.track.videoId);
       await ZephyrApi().reopenTrackResolution(widget.track.videoId);
+
       if (context.mounted) {
-        ZephyrToast.show(context, 'Track reset for re-resolution.');
+        ZephyrToast.show(context, 'Track reset for re-resolution. Choose new match:');
         ref.read(libraryProvider.notifier).loadLibrary();
+        final selected = await UnresolvedTrackModal.show(
+          context,
+          trackId: widget.track.videoId,
+          title: widget.track.title,
+          artists: widget.track.artists,
+        );
+        if (selected == true && context.mounted) {
+          ZephyrToast.show(context, 'Selection saved! Re-streaming correct track...');
+          ref.read(libraryProvider.notifier).loadLibrary();
+          if (isCurrentActiveTrack) {
+            playerNotifier.playTrack(widget.track, playerState.queue.isNotEmpty ? playerState.queue : [widget.track]);
+          }
+        }
       }
     } on ResolutionRequiredException catch (e) {
       if (context.mounted) {
-        final selected = await ResolutionCandidateModal.show(context, e);
+        final selected = await UnresolvedTrackModal.show(
+          context,
+          trackId: e.trackId,
+          title: e.title,
+          artists: e.artists,
+          initialCandidates: e.candidates,
+          initialResolutionId: e.resolutionId,
+        );
         if (selected == true && context.mounted) {
           ZephyrToast.show(context, 'Selection saved!');
           ref.read(libraryProvider.notifier).loadLibrary();
+          final player = ref.read(playerProvider);
+          if (player.currentTrack?.videoId == widget.track.videoId) {
+            ref.read(playerProvider.notifier).playTrack(widget.track, player.queue.isNotEmpty ? player.queue : [widget.track]);
+          }
         }
       }
     } catch (e) {
@@ -398,8 +575,9 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                             Navigator.of(context).pop();
                             try {
                               await ref.read(libraryProvider.notifier).addTrackToPlaylist(playlist.id, widget.track);
-                              ZephyrToast.show(context, 'Added to "${playlist.name}"');
+                              if (context.mounted) ZephyrToast.show(context, 'Added to "${playlist.name}"');
                             } catch (e) {
+                              if (!context.mounted) return;
                               final errStr = e.toString().toLowerCase();
                               final isDup = errStr.contains('duplicate') ||
                                   errStr.contains('already') ||
@@ -427,89 +605,141 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     );
   }
 
-  void _showRightClickMenu(BuildContext context, WidgetRef ref, Offset position) {
-    final playerNotifier = ref.read(playerProvider.notifier);
+  List<PopupMenuEntry<String>> _buildTrackMenuItems(BuildContext context, WidgetRef ref) {
     final authState = ref.read(authProvider);
+    final isDownloadedOrLocal = widget.track.downloadStatus == 'completed' ||
+        widget.track.isDownloaded ||
+        widget.track.localPath != null ||
+        widget.track.isLocal;
 
-    final RelativeRect positionRect = RelativeRect.fromRect(
-      Rect.fromPoints(position, position),
-      Offset.zero & MediaQuery.of(context).size,
-    );
+    final List<PopupMenuEntry<String>> items = [];
 
-    final List<PopupMenuEntry<String>> menuItems = [
+    final isFav = ref.read(libraryProvider.notifier).isFavorite(widget.track.videoId, title: widget.track.title);
+    items.add(
       PopupMenuItem(
-        value: 'queue_action',
+        value: 'toggle_favorite',
         child: Row(
           children: [
             Icon(
-              Icons.queue_music,
+              isFav ? Icons.favorite : Icons.favorite_border,
               size: 20,
-              color: ZephyrColors.textDim,
+              color: isFav ? ZephyrColors.primary : ZephyrColors.textDim,
             ),
             const SizedBox(width: 8),
-            Text(
-              'Add to Queue',
-              style: TextStyle(color: ZephyrColors.text),
-            ),
+            Text(isFav ? 'Remove from favorites' : 'Add to favorites'),
           ],
         ),
       ),
-      PopupMenuItem(
+    );
+
+    items.add(
+      const PopupMenuItem(
+        value: 'add_to_queue',
+        child: Row(
+          children: [
+            Icon(Icons.queue_music_rounded, size: 20, color: ZephyrColors.textDim),
+            SizedBox(width: 8),
+            Text('Add to Queue'),
+          ],
+        ),
+      ),
+    );
+
+    items.add(
+      const PopupMenuItem(
         value: 'add_to_playlist',
         child: Row(
           children: [
             Icon(Icons.playlist_add, size: 20, color: ZephyrColors.textDim),
-            const SizedBox(width: 8),
-            Text('Add to Playlist', style: TextStyle(color: ZephyrColors.text)),
+            SizedBox(width: 8),
+            Text('Add to Playlist'),
           ],
         ),
       ),
-      PopupMenuItem(
-        value: 'share_song',
-        child: Row(
-          children: [
-            Icon(Icons.share_rounded, size: 20, color: ZephyrColors.textDim),
-            const SizedBox(width: 8),
-            Text('Share Song', style: TextStyle(color: ZephyrColors.text)),
-          ],
-        ),
-      ),
-      PopupMenuItem(
-        value: 'go_to_album',
-        child: Row(
-          children: [
-            Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
-            const SizedBox(width: 8),
-            Text('Go to album', style: TextStyle(color: ZephyrColors.text)),
-          ],
-        ),
-      ),
-    ];
+    );
 
-    if (widget.track.videoId.startsWith('dz_') && !widget.track.downloadStatus.startsWith('downloading')) {
-      menuItems.add(
-        PopupMenuItem(
-          value: 'reopen_resolution',
+    if (widget.onRemoveFromPlaylist != null) {
+      items.add(
+        const PopupMenuItem(
+          value: 'remove_from_playlist',
           child: Row(
-            children: const [
-              Icon(Icons.sync_problem_rounded, size: 20, color: ZephyrColors.warning),
+            children: [
+              Icon(Icons.playlist_remove, size: 20, color: ZephyrColors.error),
               SizedBox(width: 8),
-              Text('Report wrong match', style: TextStyle(color: ZephyrColors.text)),
+              Text('Remove from Playlist'),
             ],
           ),
         ),
       );
     }
 
+    items.add(
+      const PopupMenuItem(
+        value: 'go_to_album',
+        child: Row(
+          children: [
+            Icon(Icons.album_outlined, size: 20, color: ZephyrColors.textDim),
+            SizedBox(width: 8),
+            Text('Go to Album'),
+          ],
+        ),
+      ),
+    );
+
+    if (widget.track.artists.isNotEmpty) {
+      for (int i = 0; i < widget.track.artists.length; i++) {
+        items.add(
+          PopupMenuItem(
+            value: 'go_to_artist_${i < widget.track.artistsIds.length ? widget.track.artistsIds[i] : widget.track.artists[i]}',
+            child: Row(
+              children: [
+                const Icon(Icons.person_outline, size: 20, color: ZephyrColors.textDim),
+                const SizedBox(width: 8),
+                Text('Go to ${widget.track.artists[i]}'),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
+    if (!isDownloadedOrLocal) {
+      items.add(
+        const PopupMenuItem(
+          value: 'force_download',
+          child: Row(
+            children: [
+              Icon(Icons.download_for_offline_outlined, size: 20, color: ZephyrColors.textDim),
+              SizedBox(width: 8),
+              Text('Download Track'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    items.add(
+      const PopupMenuItem(
+        value: 'share_song',
+        child: Row(
+          children: [
+            Icon(Icons.share_rounded, size: 20, color: ZephyrColors.textDim),
+            SizedBox(width: 8),
+            Text('Share Song'),
+          ],
+        ),
+      ),
+    );
+
     if (widget.track.needsResolution) {
-      menuItems.add(
-        PopupMenuItem(
+      items.add(
+        const PopupMenuItem(
           value: 'resolve_track',
           child: Row(
-            children: const [
+            children: [
               Icon(Icons.find_in_page_rounded, size: 20, color: Colors.amberAccent),
               SizedBox(width: 8),
-              Text('Select match', style: TextStyle(color: ZephyrColors.text)),
+              Text('Select match'),
             ],
           ),
         ),
@@ -517,14 +747,14 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     }
 
     if (authState.isCurator) {
-      menuItems.add(
-        PopupMenuItem(
+      items.add(
+        const PopupMenuItem(
           value: 'edit_metadata',
           child: Row(
             children: [
               Icon(Icons.edit_note, size: 20, color: ZephyrColors.textDim),
-              const SizedBox(width: 8),
-              Text('Edit Track Details', style: TextStyle(color: ZephyrColors.text)),
+              SizedBox(width: 8),
+              Text('Edit Track Details'),
             ],
           ),
         ),
@@ -532,81 +762,62 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     }
 
     if (authState.isAdmin) {
-      menuItems.add(
+      items.add(
         PopupMenuItem(
           value: 'delete_track',
           child: Row(
             children: [
               Icon(Icons.delete_forever, size: 20, color: ZephyrColors.error.withValues(alpha: 0.8)),
-              const SizedBox(width: 8),
-              Text('Delete from Server', style: TextStyle(color: ZephyrColors.error)),
+              SizedBox(width: 8),
+              const Text('Delete from Server', style: TextStyle(color: ZephyrColors.error)),
             ],
           ),
         ),
       );
     }
 
-    showMenu<String>(
+    if (widget.track.videoId.startsWith('dz_') && !widget.track.downloadStatus.startsWith('downloading')) {
+      items.add(
+        const PopupMenuItem(
+          value: 'reopen_resolution',
+          child: Row(
+            children: [
+              Icon(Icons.sync_problem_rounded, size: 20, color: ZephyrColors.warning),
+              SizedBox(width: 8),
+              Text('Report wrong match'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return items;
+  }
+
+  Future<void> _showRightClickMenu(BuildContext context, WidgetRef ref, Offset position) async {
+    final RelativeRect positionRect = RelativeRect.fromRect(
+      Rect.fromPoints(position, position),
+      Offset.zero & MediaQuery.of(context).size,
+    );
+
+    final value = await showMenu<String>(
       context: context,
       position: positionRect,
       color: ZephyrColors.bgCard,
-      items: menuItems,
-    ).then((value) {
-      if (value == null) return;
-      
-      if (value == 'queue_action') {
-        playerNotifier.addToQueue(widget.track);
-        ZephyrToast.show(
-          context,
-          'Added "${widget.track.title}" to queue!',
-        );
-      } else if (value == 'add_to_playlist') {
-        _showAddToPlaylistDialog(context, ref);
-      } else if (value == 'share_song') {
-        showShareDialog(context, ref, widget.track);
-      } else if (value == 'go_to_album') {
-        final navNotifier = ref.read(navigationProvider.notifier);
-        if (widget.track.albumId != null && widget.track.albumId!.isNotEmpty) {
-          navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: widget.track.albumId!));
-        } else {
-          final query = (widget.track.album != null && widget.track.album!.isNotEmpty)
-              ? '${widget.track.album} ${widget.track.artists.isNotEmpty ? widget.track.artists.first : ''}'.trim()
-              : '${widget.track.title} ${widget.track.artists.isNotEmpty ? widget.track.artists.first : ''}'.trim();
-          ZephyrApi().search(query, remote: true).then((searchRes) {
-            final results = searchRes['results'];
-            List<dynamic> albums = [];
-            if (results is Map && results.containsKey('albums')) {
-              albums = (results['albums'] as List?) ?? [];
-            } else if (searchRes['albums'] is List) {
-              albums = searchRes['albums'] as List;
-            }
-            if (albums.isNotEmpty) {
-              final firstAlbum = albums.first;
-              final id = (firstAlbum['id'] ?? firstAlbum['browse_id'] ?? firstAlbum['browseId'])?.toString();
-              if (id != null && id.isNotEmpty) {
-                final formattedId = id.startsWith('dz_') ? id : 'dz_$id';
-                navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: formattedId));
-                return;
-              }
-            }
-            ZephyrToast.show(context, 'Could not find album page');
-          }).catchError((_) {
-            ZephyrToast.show(context, 'Could not find album page');
-          });
-        }
-      } else if (value == 'edit_metadata') {
-        showDialog<bool>(
-          context: context,
-          builder: (context) => TrackMetadataEditorDialog(track: widget.track),
-        ).then((updated) {
-          if (updated == true) {
-            ref.read(libraryProvider.notifier).loadLibrary();
-          }
-        });
-      } else if (value == 'delete_track') {
-        _showDeleteConfirmationDialog(context, ref);
-      }
-    });
+      items: _buildTrackMenuItems(context, ref),
+    );
+    if (value == null || !context.mounted) return;
+    _handleMenuSelection(context, ref, value);
+  }
+
+  Future<void> _editMetadata(BuildContext context, WidgetRef ref) async {
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (context) => TrackMetadataEditorDialog(track: widget.track),
+    );
+    if (updated == true) {
+      ref.read(libraryProvider.notifier).loadLibrary();
+    }
   }
 
   void _showDeleteConfirmationDialog(BuildContext context, WidgetRef ref) {

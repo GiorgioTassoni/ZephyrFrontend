@@ -96,7 +96,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         }
         return _buildVpsSongsDetailView(libraryState, navNotifier);
       case LibraryView.grid:
-      default:
         return _buildLibraryGridView(libraryState, navNotifier);
     }
   }
@@ -181,133 +180,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  Widget _buildFavoritesDetailView(LibraryState libraryState, NavigationNotifier navNotifier) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header
-        Padding(
-          padding: const EdgeInsets.only(left: 16, top: 16, right: 16, bottom: 8),
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back, color: ZephyrColors.text),
-                onPressed: () {
-                  if (navNotifier.canGoBack) {
-                    navNotifier.navigateBack();
-                  } else {
-                    navNotifier.navigateTo(const ScreenState(type: ScreenType.library, intId: 1));
-                  }
-                },
-              ),
-              const SizedBox(width: 8),
-              const Icon(Icons.favorite, color: ZephyrColors.primary, size: 24),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Favorite Songs',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: ZephyrColors.text,
-                      ),
-                    ),
-                    if (!libraryState.favoritesLoading && libraryState.favorites.isNotEmpty)
-                      Text(
-                        '${libraryState.favorites.length} songs',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: ZephyrColors.textDim,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              if (libraryState.favoritesLoading)
-                const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    color: ZephyrColors.primary,
-                    strokeWidth: 2,
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const Divider(color: ZephyrColors.bgLight, height: 1),
-        // List
-        Expanded(
-          child: libraryState.favoritesLoading && libraryState.favorites.isEmpty
-              ? const Center(
-                  child: CircularProgressIndicator(color: ZephyrColors.primary),
-                )
-              : libraryState.favorites.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No favorite songs yet. Tap the heart icon on any song to add it here.',
-                        style: TextStyle(color: ZephyrColors.textDim),
-                      ),
-                    )
-                  : ListView.builder(
-                      controller: _favoritesScrollController,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      // +1 for the footer item (loading spinner or end-of-list label)
-                      itemCount: libraryState.favorites.length + 1,
-                      itemBuilder: (context, index) {
-                        // Footer item
-                        if (index == libraryState.favorites.length) {
-                          if (libraryState.favoritesLoading) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 24),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    color: ZephyrColors.primary,
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                              ),
-                            );
-                          }
-                          if (!libraryState.hasMoreFavorites) {
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 24),
-                              child: Center(
-                                child: Text(
-                                  '${libraryState.favorites.length} songs loaded',
-                                  style: const TextStyle(
-                                    color: ZephyrColors.textMuted,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            );
-                          }
-                          return const SizedBox.shrink();
-                        }
-                        final track = libraryState.favorites[index];
-                        // ListView.builder only constructs visible items, so
-                        // TrackTile (and its CoverImage) is only created — and
-                        // the cover HTTP request only fired — when the row
-                        // scrolls into view.
-                        return RepaintBoundary(
-                          child: TrackTile(
-                            track: track,
-                            queue: libraryState.favorites,
-                          ),
-                        );
-                      },
-                    ),
-        ),
-      ],
-    );
-  }
+
 
   Widget _buildVpsSongsDetailView(LibraryState libraryState, NavigationNotifier navNotifier) {
     return Column(
@@ -371,14 +244,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
 class _CustomLibraryCard extends StatefulWidget {
   final String title;
-  final String? subtitle;
   final Widget icon;
   final Color backgroundColor;
   final VoidCallback onTap;
 
   const _CustomLibraryCard({
     required this.title,
-    this.subtitle,
     required this.icon,
     required this.backgroundColor,
     required this.onTap,
@@ -401,13 +272,13 @@ class _CustomLibraryCardState extends State<_CustomLibraryCard> {
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
-          color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.3) : ZephyrColors.bgCard,
+          color: ZephyrColors.bgCard,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: _isHovered
-                ? ZephyrColors.primary.withValues(alpha: 0.5)
-                : ZephyrColors.bgLight.withValues(alpha: 0.5),
-            width: 1,
+                ? ZephyrColors.primary.withValues(alpha: 0.8)
+                : ZephyrColors.bgLight.withValues(alpha: 0.4),
+            width: _isHovered ? 1.5 : 1.0,
           ),
           boxShadow: [
             BoxShadow(
@@ -451,18 +322,6 @@ class _CustomLibraryCardState extends State<_CustomLibraryCard> {
                     color: ZephyrColors.text,
                   ),
                 ),
-                if (widget.subtitle != null && widget.subtitle!.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.subtitle!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: ZephyrColors.textDim,
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 4),
                 const Text(
                   'Collection',

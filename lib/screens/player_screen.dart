@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
@@ -14,6 +15,9 @@ import '../widgets/artist_links.dart';
 import '../widgets/toast.dart';
 import '../widgets/share_dialog.dart';
 import '../widgets/favorite_button.dart';
+import '../widgets/visualizer.dart';
+import '../widgets/player_song_context_menu.dart';
+import '../widgets/devices_modal.dart';
 
 // Model for LRC line parsing
 class LrcLine {
@@ -40,29 +44,47 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
   Track? _enrichedMetadata;
   List<LrcLine> _lrcLines = [];
   final List<GlobalKey> _lyricKeys = [];
+  final List<GlobalKey> _modalLyricKeys = [];
   Map<String, dynamic>? _relatedData;
   bool _isLoadingMetadata = false;
   bool _isLoadingRelated = false;
   String? _lastVideoId;
   int _activeLrcIndex = -1;
   bool _isSynced = true;
-  bool _hasRetriedLyricsOnPlay = false;
+  bool _hasInitialScrolled = false;
+
+  StreamSubscription<String>? _lyricsSub;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(_onTabChanged);
+    _lyricsSub = _api.onLyricsReady.listen((videoId) {
+      if (mounted && (_lastVideoId == null || videoId == _lastVideoId || videoId == 'dz_$_lastVideoId' || _lastVideoId == 'dz_$videoId')) {
+        _fetchMetadataAndRelated(videoId, force: true);
+      }
+    });
   }
 
   void _onTabChanged() {
-    if (_tabController.index == 1 && _relatedData == null && !_isLoadingRelated && _lastVideoId != null) {
+    if (_tabController.index == 0) {
+      _hasInitialScrolled = false;
+      _isSynced = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          final pos = ref.read(playerProvider).position;
+          _updateLyricsScrolling(pos);
+        }
+      });
+    } else if (_tabController.index == 1 && _relatedData == null && !_isLoadingRelated && _lastVideoId != null) {
       _fetchRelatedTracks(_lastVideoId!);
     }
   }
 
   @override
   void dispose() {
+    _lyricsSub?.cancel();
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     _lyricsScrollController.dispose();
@@ -70,39 +92,52 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
   }
 
   Future<void> _fetchMetadataAndRelated(String videoId, {bool force = false}) async {
-    if (_lastVideoId == videoId && !force) return;
-    if (_lastVideoId != videoId) {
-      _hasRetriedLyricsOnPlay = false;
-    }
     _lastVideoId = videoId;
 
+    final currentTrack = ref.read(playerProvider).currentTrack;
+    final hasLrc = (currentTrack != null &&
+        (currentTrack.videoId == videoId || currentTrack.videoId == 'dz_$videoId' || videoId == 'dz_${currentTrack.videoId}') &&
+        currentTrack.lyricsLrc != null &&
+        currentTrack.lyricsLrc!.isNotEmpty);
+
     setState(() {
-      _isLoadingMetadata = true;
+      _isLoadingMetadata = !hasLrc;
       _isLoadingRelated = false;
-      _lrcLines = [];
-      _lyricKeys.clear();
+      _enrichedMetadata = currentTrack;
+      if (!hasLrc) {
+        _lrcLines = [];
+        _lyricKeys.clear();
+        _modalLyricKeys.clear();
+        _activeLrcIndex = -1;
+      }
       _relatedData = null;
-      _activeLrcIndex = -1;
       _isSynced = true;
+      _hasInitialScrolled = false;
     });
 
-    // 1. Fetch Track Metadata (Lyrics)
-    try {
-      final metadata = await _api.getTrackMetadata(videoId);
-      _enrichedMetadata = metadata;
-      
-      if (metadata.downloadStatus == 'completed' && metadata.localPath != null) {
-        // Track is downloaded, lyrics are parsed
+    if (hasLrc) {
+      _parseLrc(currentTrack.lyricsLrc!);
+      _isLoadingMetadata = false;
+    } else if (force || (currentTrack != null && (currentTrack.isDownloaded || currentTrack.downloadStatus == 'completed'))) {
+      // 1. Fetch Track Metadata (Lyrics) only if track is already downloaded or force requested
+      try {
+        final metadata = await _api.getTrackMetadata(videoId);
+        _enrichedMetadata = metadata;
+        
+        final lrcText = resLyricsLrc(metadata) ?? metadata.lyricsText;
+        if (lrcText != null && lrcText.isNotEmpty) {
+          _parseLrc(lrcText);
+        }
+      } catch (e) {
+        // Handle 404 silently (not in library yet)
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoadingMetadata = false;
+          });
+        }
       }
-      
-      // Parse LRC if available
-      final lrcText = resLyricsLrc(metadata);
-      if (lrcText != null && lrcText.isNotEmpty) {
-        _parseLrc(lrcText);
-      }
-    } catch (e) {
-      // Handle error silently or show placeholder
-    } finally {
+    } else {
       if (mounted) {
         setState(() {
           _isLoadingMetadata = false;
@@ -164,7 +199,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     setState(() {
       _lrcLines = parsed;
       _lyricKeys.clear();
+      _modalLyricKeys.clear();
       _lyricKeys.addAll(List.generate(parsed.length, (_) => GlobalKey()));
+      _modalLyricKeys.addAll(List.generate(parsed.length, (_) => GlobalKey()));
     });
   }
 
@@ -180,48 +217,70 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
       }
     }
 
-    if (activeIndex != -1 && activeIndex != _activeLrcIndex) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+    if (activeIndex != -1 && (activeIndex != _activeLrcIndex || !_hasInitialScrolled)) {
+      final isFirstScroll = !_hasInitialScrolled;
+      _hasInitialScrolled = true;
+
+      if (mounted) {
         setState(() {
           _activeLrcIndex = activeIndex;
         });
- 
-        // Animate/scroll to active line if synced
-        if (_isSynced &&
-            _activeLrcIndex >= 0 &&
-            _activeLrcIndex < _lyricKeys.length &&
-            _lyricsScrollController.hasClients &&
-            _lyricsScrollController.position.hasContentDimensions) {
+      }
+
+      if (_isSynced &&
+          _activeLrcIndex >= 0 &&
+          _activeLrcIndex < _lyricKeys.length &&
+          _lyricsScrollController.hasClients) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_isSynced || !_lyricsScrollController.hasClients) return;
           final key = _lyricKeys[_activeLrcIndex];
-          final context = key.currentContext;
-          if (context != null) {
-            Scrollable.ensureVisible(
-              context,
-              alignment: 0.5,
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutCubic,
-            );
-          } else {
-            final estimate = _activeLrcIndex * 58.0;
-            _lyricsScrollController.jumpTo(
-              estimate.clamp(0.0, _lyricsScrollController.position.maxScrollExtent),
-            );
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              final retryContext = key.currentContext;
-              if (retryContext != null) {
-                Scrollable.ensureVisible(
-                  retryContext,
-                  alignment: 0.5,
-                  duration: const Duration(milliseconds: 150),
-                  curve: Curves.easeOutCubic,
+          final currentContext = key.currentContext;
+
+          if (currentContext != null && currentContext.findRenderObject() is RenderBox) {
+            final box = currentContext.findRenderObject() as RenderBox;
+            if (box.hasSize) {
+              final scrollableContext = _lyricsScrollController.position.context.storageContext;
+              final positionInViewport = box.localToGlobal(Offset.zero, ancestor: scrollableContext.findRenderObject());
+              final currentOffset = _lyricsScrollController.offset;
+              final itemTop = currentOffset + positionInViewport.dy;
+              final itemHeight = box.size.height;
+              final viewportHeight = _lyricsScrollController.position.viewportDimension;
+              final targetOffset = (itemTop + (itemHeight / 2) - (viewportHeight / 2)).clamp(
+                0.0,
+                _lyricsScrollController.position.maxScrollExtent,
+              );
+
+              if (isFirstScroll) {
+                _lyricsScrollController.jumpTo(targetOffset);
+              } else if ((_lyricsScrollController.offset - targetOffset).abs() > 8) {
+                _lyricsScrollController.animateTo(
+                  targetOffset,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
                 );
               }
-            });
+              return;
+            }
           }
-        }
-      });
+
+          if (_lyricsScrollController.position.hasContentDimensions) {
+            final viewportHeight = _lyricsScrollController.position.viewportDimension;
+            final targetOffset = (_activeLrcIndex * 54.0 + 27.0 - (viewportHeight / 2)).clamp(
+              0.0,
+              _lyricsScrollController.position.maxScrollExtent,
+            );
+            if (isFirstScroll) {
+              _lyricsScrollController.jumpTo(targetOffset);
+            } else if ((_lyricsScrollController.offset - targetOffset).abs() > 15) {
+              _lyricsScrollController.animateTo(
+                targetOffset,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            }
+          }
+        });
+      }
     }
   }
 
@@ -269,7 +328,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
         }
       } catch (_) {}
 
-      ZephyrToast.show(context, 'Could not find album page');
+      if (context.mounted) ZephyrToast.show(context, 'Could not find album page');
     } else if (value.startsWith('go_to_artist_')) {
       final indexStr = value.substring('go_to_artist_'.length);
       final index = int.tryParse(indexStr) ?? 0;
@@ -315,7 +374,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
           }
         } catch (_) {}
 
-        ZephyrToast.show(context, 'Could not find artist page for "$name"');
+        if (context.mounted) ZephyrToast.show(context, 'Could not find artist page for "$name"');
       }
     } else if (value == 'share') {
       showShareDialog(context, ref, track);
@@ -325,12 +384,179 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     }
   }
 
+  void _openFullscreenLyrics(BuildContext context, Track track) {
+    final modalScrollController = ScrollController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: ZephyrColors.bgDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return Consumer(
+          builder: (context, ref, child) {
+            final playerState = ref.watch(playerProvider);
+            int modalActiveIndex = -1;
+            for (int i = 0; i < _lrcLines.length; i++) {
+              if (_lrcLines[i].timestamp <= playerState.position) {
+                modalActiveIndex = i;
+              } else {
+                break;
+              }
+            }
+
+            if (_isSynced &&
+                modalActiveIndex >= 0 &&
+                modalActiveIndex < _modalLyricKeys.length &&
+                modalScrollController.hasClients &&
+                modalScrollController.position.hasContentDimensions) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (_isSynced &&
+                    modalScrollController.hasClients &&
+                    modalScrollController.position.hasContentDimensions) {
+                  final key = _modalLyricKeys[modalActiveIndex];
+                  final currentContext = key.currentContext;
+
+                  if (currentContext != null) {
+                    final box = currentContext.findRenderObject() as RenderBox?;
+                    if (box != null && box.hasSize) {
+                      final scrollableContext = modalScrollController.position.context.storageContext;
+                      final positionInViewport = box.localToGlobal(Offset.zero, ancestor: scrollableContext.findRenderObject());
+                      final currentOffset = modalScrollController.offset;
+                      final itemTop = currentOffset + positionInViewport.dy;
+                      final itemHeight = box.size.height;
+                      final viewportHeight = modalScrollController.position.viewportDimension;
+                      final targetOffset = (itemTop + (itemHeight / 2) - (viewportHeight / 2)).clamp(
+                        0.0,
+                        modalScrollController.position.maxScrollExtent,
+                      );
+
+                      if ((modalScrollController.offset - targetOffset).abs() > 8) {
+                        modalScrollController.animateTo(
+                          targetOffset,
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                      }
+                    }
+                  } else {
+                    final viewportHeight = modalScrollController.position.viewportDimension;
+                    final targetOffset = (modalActiveIndex * 48.0 + 24.0 - (viewportHeight / 2)).clamp(
+                      0.0,
+                      modalScrollController.position.maxScrollExtent,
+                    );
+                    if ((modalScrollController.offset - targetOffset).abs() > 15) {
+                      modalScrollController.animateTo(
+                        targetOffset,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                      );
+                    }
+                  }
+                }
+              });
+            }
+
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(ctx).size.height * 0.9,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              track.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: ZephyrColors.text,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: ZephyrColors.text),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1, color: ZephyrColors.bgLight),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: _buildLyricsView(
+                          controller: modalScrollController,
+                          isModal: true,
+                          activeLineIndex: modalActiveIndex,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Color _getTrackAmbientColor(Track track) {
+    final hash = track.videoId.hashCode.abs();
+    final hues = [
+      const Color(0xFFF59E0B), // Zephyr Amber
+      const Color(0xFF06B6D4), // Cyan
+      const Color(0xFF8B5CF6), // Purple
+      const Color(0xFF10B981), // Emerald
+      const Color(0xFFEC4899), // Pink / Rose
+      const Color(0xFF3B82F6), // Royal Blue
+      const Color(0xFFF97316), // Warm Orange
+    ];
+    return hues[hash % hues.length];
+  }
+
   @override
   Widget build(BuildContext context) {
     final playerState = ref.watch(playerProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
-    final libraryState = ref.watch(libraryProvider);
     final libraryNotifier = ref.read(libraryProvider.notifier);
+
+    // Listen for track changes to force lyrics reload when skipping songs
+    ref.listen(playerProvider.select((s) => s.currentTrack?.videoId), (previous, next) {
+      if (next != null && next != previous) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _fetchMetadataAndRelated(next, force: true);
+          }
+        });
+      }
+    });
+
+    // Listen for live lyrics/metadata arrival after background download completes
+    ref.listen(playerProvider.select((s) => s.currentTrack?.lyricsLrc ?? s.currentTrack?.lyricsText), (previous, next) {
+      if (next != null && next.isNotEmpty && next != previous) {
+        final currentTrack = ref.read(playerProvider).currentTrack;
+        if (currentTrack != null) {
+          setState(() {
+            _enrichedMetadata = currentTrack;
+            _isLoadingMetadata = false;
+          });
+          if (currentTrack.lyricsLrc != null && currentTrack.lyricsLrc!.isNotEmpty) {
+            _parseLrc(currentTrack.lyricsLrc!);
+          } else if (currentTrack.lyricsText != null && currentTrack.lyricsText!.contains('[')) {
+            _parseLrc(currentTrack.lyricsText!);
+          }
+        }
+      }
+    });
 
     if (playerState.currentTrack == null) {
       if (widget.isInline) {
@@ -349,47 +575,418 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     }
 
     final track = playerState.currentTrack!;
-    
-    // Auto fetch metadata and related when song changes
-    _fetchMetadataAndRelated(track.videoId);
 
-    // One-time retry when music starts playing if lyrics were missing on initial load
-    if (playerState.isPlaying &&
-        playerState.position.inMilliseconds > 0 &&
-        !_hasRetriedLyricsOnPlay &&
-        !_isLoadingMetadata &&
-        _lrcLines.isEmpty &&
-        (_enrichedMetadata?.lyricsText == null || _enrichedMetadata!.lyricsText!.trim().isEmpty)) {
-      _hasRetriedLyricsOnPlay = true;
-      Future.microtask(() {
+    // Immediately load & parse lyrics when track changes
+    if (_lastVideoId != track.videoId) {
+      _lastVideoId = track.videoId;
+      _enrichedMetadata = track;
+      _lrcLines = [];
+      _lyricKeys.clear();
+      _activeLrcIndex = -1;
+      _isLoadingMetadata = true;
+
+      // Parse lyricsLrc immediately if already available on currentTrack
+      if (track.lyricsLrc != null && track.lyricsLrc!.isNotEmpty) {
+        _parseLrc(track.lyricsLrc!);
+      }
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _fetchMetadataAndRelated(track.videoId, force: true);
         }
       });
+    } else if (_lrcLines.isEmpty && track.lyricsLrc != null && track.lyricsLrc!.isNotEmpty) {
+      _parseLrc(track.lyricsLrc!);
+    } else if (_lrcLines.isEmpty && track.lyricsText != null && track.lyricsText!.contains('[')) {
+      _parseLrc(track.lyricsText!);
     }
     
     // Auto update lyrics highlighted line based on player position
     _updateLyricsScrolling(playerState.position);
 
     final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title);
+    final ambientColor = _getTrackAmbientColor(track);
+
+    final isMobile = MediaQuery.of(context).size.width < 700;
 
     if (widget.isInline) {
+      if (isMobile) {
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: const SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: Brightness.light,
+          ),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 800),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color.alphaBlend(ambientColor.withValues(alpha: 0.35), ZephyrColors.bgDark),
+                  Color.alphaBlend(ambientColor.withValues(alpha: 0.15), ZephyrColors.bgDark),
+                  ZephyrColors.bgDark,
+                ],
+                stops: const [0.0, 0.5, 1.0],
+              ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.only(top: widget.isInline ? 4 : (MediaQuery.of(context).padding.top + 8)),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Column(
+                children: [
+                  // Top Mobile Header Bar
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.keyboard_arrow_down, color: ZephyrColors.text, size: 30),
+                        onPressed: () {
+                          final navNotifier = ref.read(navigationProvider.notifier);
+                          if (navNotifier.canGoBack) {
+                            navNotifier.navigateBack();
+                          } else {
+                            navNotifier.navigateTo(const ScreenState(type: ScreenType.home));
+                          }
+                        },
+                      ),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            const Text(
+                              'PLAYING FROM PLAYLIST',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
+                                color: ZephyrColors.textDim,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              track.album ?? 'Zephyr Music',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: ZephyrColors.text,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.devices,
+                          color: !playerState.isPlayerDevice ? ZephyrColors.primary : ZephyrColors.textDim,
+                          size: 22,
+                        ),
+                        tooltip: 'Connect to a device',
+                        onPressed: () => DevicesModal.show(context),
+                      ),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert, color: ZephyrColors.text, size: 24),
+                        color: ZephyrColors.bgCard,
+                        onSelected: (val) => _handlePlayerMenuSelection(context, ref, track, val),
+                        itemBuilder: (context) {
+                          final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
+                          return [
+                            const PopupMenuItem(
+                              value: 'go_to_album',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.album, size: 20, color: ZephyrColors.textDim),
+                                  SizedBox(width: 10),
+                                  Text('Go to album'),
+                                ],
+                              ),
+                            ),
+                            for (int i = 0; i < validArtists.length; i++)
+                              PopupMenuItem(
+                                value: 'go_to_artist_$i',
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.person, size: 20, color: ZephyrColors.textDim),
+                                    const SizedBox(width: 10),
+                                    Text(validArtists.length == 1 ? 'Go to artist' : 'Go to ${validArtists[i]}'),
+                                  ],
+                                ),
+                              ),
+                            const PopupMenuItem(
+                              value: 'share',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.share_rounded, size: 20, color: ZephyrColors.textDim),
+                                  SizedBox(width: 10),
+                                  Text('Share song'),
+                                ],
+                              ),
+                            ),
+                          ];
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Centered Large Album Artwork
+                  Center(
+                    child: GestureDetector(
+                      onHorizontalDragEnd: (details) {
+                        if (details.primaryVelocity != null && details.primaryVelocity! < -200) {
+                          playerNotifier.playNext();
+                          HapticFeedback.lightImpact();
+                        } else if (details.primaryVelocity != null && details.primaryVelocity! > 200) {
+                          playerNotifier.playPrevious();
+                          HapticFeedback.lightImpact();
+                        }
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: ambientColor.withValues(alpha: 0.6),
+                              blurRadius: 40,
+                              spreadRadius: 4,
+                              offset: const Offset(0, 12),
+                            ),
+                          ],
+                        ),
+                        child: CoverImage(
+                          videoId: track.videoId,
+                          coverUrl: track.coverUrl,
+                          size: 290,
+                          borderRadius: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+
+                  // Track Title, Artist & Favorite Heart
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              track.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: ZephyrColors.text,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            ArtistLinks(
+                              track: track,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: ZephyrColors.textDim,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      FavoriteButton(
+                        isFavorite: isFav,
+                        size: 26,
+                        onTap: () => libraryNotifier.toggleFavorite(track),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Seek Bar
+                  SeekBar(
+                    position: playerState.position,
+                    duration: playerState.effectiveDuration,
+                    isLoading: playerState.isLoading,
+                    onChangeEnd: (duration) {
+                      playerNotifier.seek(duration);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Playback Controls Row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          Icons.shuffle,
+                          color: playerState.isShuffled ? ZephyrColors.primary : ZephyrColors.textDim,
+                          size: 24,
+                        ),
+                        onPressed: () => playerNotifier.toggleShuffle(),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.skip_previous, color: ZephyrColors.text, size: 34),
+                        onPressed: () => playerNotifier.playPrevious(),
+                      ),
+                      if (playerState.isLoading)
+                        const SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            valueColor: AlwaysStoppedAnimation<Color>(ZephyrColors.primary),
+                          ),
+                        )
+                      else
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            shape: const CircleBorder(),
+                            padding: const EdgeInsets.all(18),
+                            backgroundColor: ZephyrColors.text,
+                            foregroundColor: ZephyrColors.bgDark,
+                            elevation: 6,
+                          ),
+                          onPressed: () => playerNotifier.togglePlayPause(),
+                          child: Icon(
+                            playerState.isPlaying ? Icons.pause : Icons.play_arrow,
+                            size: 32,
+                          ),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.skip_next, color: ZephyrColors.text, size: 34),
+                        onPressed: () => playerNotifier.playNext(),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          playerState.queueMode == 'repeat_one'
+                              ? Icons.repeat_one
+                              : Icons.repeat,
+                          color: playerState.queueMode != 'normal' ? ZephyrColors.primary : ZephyrColors.textDim,
+                          size: 24,
+                        ),
+                        onPressed: () => playerNotifier.toggleQueueMode(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Active Device Pill on Mobile
+                  if (!playerState.isPlayerDevice && playerState.activeDeviceName != null) ...[
+                    Center(
+                      child: GestureDetector(
+                        onTap: () => DevicesModal.show(context),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: ZephyrColors.primary.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: ZephyrColors.primary.withValues(alpha: 0.35)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.speaker_rounded, size: 14, color: ZephyrColors.primary),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  'Listening on ${playerState.activeDeviceName}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: ZephyrColors.primary,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ] else ...[
+                    const SizedBox(height: 6),
+                  ],
+
+                  // Lyrics Card ("Lyrics" / "Testi")
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Color.alphaBlend(ambientColor.withValues(alpha: 0.35), ZephyrColors.bgCard),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                    ),
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Lyrics',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: ZephyrColors.text,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.share_outlined, color: ZephyrColors.text, size: 20),
+                                  onPressed: () => showShareDialog(context, ref, track),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.fullscreen, color: ZephyrColors.text, size: 22),
+                                  onPressed: () => _openFullscreenLyrics(context, track),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 220,
+                          child: _isLoadingMetadata
+                              ? const Center(child: CircularProgressIndicator(color: ZephyrColors.primary))
+                              : _buildLyricsView(isPreview: true),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
       return Container(
         color: ZephyrColors.bgDark,
         child: Row(
           children: [
-            // Center Pane: Synced Lyrics (the only thing with the background should be the lyrics)
+            // Center Pane: Synced Lyrics
             Expanded(
               flex: 7,
-              child: Container(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 800),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      const Color(0xFF2A1B07), // Ambient deep bronze/amber-chocolate shade
-                      const Color(0xFF160E03), // Very dark bronze tint
-                      ZephyrColors.bgDark,     // Smooth transition to dark theme background
+                      Color.alphaBlend(ambientColor.withValues(alpha: 0.25), ZephyrColors.bgDark),
+                      Color.alphaBlend(ambientColor.withValues(alpha: 0.10), ZephyrColors.bgDark),
+                      ZephyrColors.bgDark,
                     ],
                     stops: const [0.0, 0.5, 1.0],
                   ),
@@ -414,11 +1011,23 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Center(
-                      child: CoverImage(
-                        videoId: track.videoId,
-                        coverUrl: track.coverUrl,
-                        size: context.scale(320),
-                        borderRadius: 12,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: ambientColor.withValues(alpha: 0.35),
+                              blurRadius: 32,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                        child: CoverImage(
+                          videoId: track.videoId,
+                          coverUrl: track.coverUrl,
+                          size: context.scale(320),
+                          borderRadius: 12,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 24),
@@ -426,29 +1035,47 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                track.title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                          child: GestureDetector(
+                            onSecondaryTapDown: (details) {
+                              showPlayerSongContextMenu(context, ref, track, details.globalPosition);
+                            },
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        track.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    ZephyrVisualizer(
+                                      isPlaying: playerState.isPlaying,
+                                      barColor: ambientColor,
+                                      height: 18,
+                                    ),
+                                  ],
                                 ),
-                              ),
-                              const SizedBox(height: 6),
-                              ArtistLinks(
-                                track: track,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: ZephyrColors.textDim,
+                                const SizedBox(height: 6),
+                                ArtistLinks(
+                                  track: track,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: ZephyrColors.textDim,
+                                  ),
+                                  maxLines: 2,
                                 ),
-                                maxLines: 2,
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -531,15 +1158,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
         title: const Text('NOW PLAYING'),
         centerTitle: true,
       ),
-      body: Container(
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 800),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              ZephyrColors.bgLight.withOpacity(0.5),
+              Color.alphaBlend(ambientColor.withValues(alpha: 0.25), ZephyrColors.bgDark),
               ZephyrColors.bgDark,
             ],
+            stops: const [0.0, 0.6],
           ),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 24),
@@ -551,44 +1180,74 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  CoverImage(
-                    videoId: track.videoId,
-                    coverUrl: track.coverUrl,
-                    size: 320,
-                    borderRadius: 16,
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: ambientColor.withValues(alpha: 0.45),
+                          blurRadius: 40,
+                          spreadRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: CoverImage(
+                      videoId: track.videoId,
+                      coverUrl: track.coverUrl,
+                      size: 320,
+                      borderRadius: 16,
+                    ),
                   ),
                   const SizedBox(height: 32),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              track.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: ZephyrColors.text,
+                        child: GestureDetector(
+                          onSecondaryTapDown: (details) {
+                            showPlayerSongContextMenu(context, ref, track, details.globalPosition);
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      track.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w600,
+                                        color: ZephyrColors.text,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  ZephyrVisualizer(
+                                    isPlaying: playerState.isPlaying,
+                                    barColor: ambientColor,
+                                    height: 22,
+                                  ),
+                                ],
                               ),
-                            ),
-                            const SizedBox(height: 6),
-                            ArtistLinks(
-                              track: track,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                color: ZephyrColors.textDim,
+                              const SizedBox(height: 6),
+                              ArtistLinks(
+                                track: track,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  color: ZephyrColors.textDim,
+                                ),
+                                onNavigate: () {
+                                  if (Navigator.of(context).canPop()) {
+                                    Navigator.of(context).pop();
+                                  }
+                                },
                               ),
-                              onNavigate: () {
-                                if (Navigator.of(context).canPop()) {
-                                  Navigator.of(context).pop();
-                                }
-                              },
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                       FavoriteButton(
@@ -655,7 +1314,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                   // SeekBar
                   SeekBar(
                     position: playerState.position,
-                    duration: playerState.duration,
+                    duration: playerState.effectiveDuration,
+                    isLoading: playerState.isLoading,
                     onChangeEnd: (duration) {
                       playerNotifier.seek(duration);
                     },
@@ -690,17 +1350,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                           ),
                         )
                       else
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            shape: const CircleBorder(),
-                            padding: const EdgeInsets.all(16),
-                            backgroundColor: ZephyrColors.text,
-                            foregroundColor: ZephyrColors.bgDark,
+                        Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: ambientColor.withValues(alpha: 0.5),
+                                blurRadius: 20,
+                                spreadRadius: 2,
+                              ),
+                            ],
                           ),
-                          onPressed: () => playerNotifier.togglePlayPause(),
-                          child: Icon(
-                            playerState.isPlaying ? Icons.pause : Icons.play_arrow,
-                            size: 32,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              shape: const CircleBorder(),
+                              padding: const EdgeInsets.all(16),
+                              backgroundColor: ZephyrColors.text,
+                              foregroundColor: ZephyrColors.bgDark,
+                              elevation: 4,
+                            ),
+                            onPressed: () => playerNotifier.togglePlayPause(),
+                            child: Icon(
+                              playerState.isPlaying ? Icons.pause : Icons.play_arrow,
+                              size: 32,
+                            ),
                           ),
                         ),
                       const SizedBox(width: 16),
@@ -818,28 +1491,60 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     );
   }
 
-  Widget _buildLyricsView() {
+  double _getResponsiveLyricsFontSize(BuildContext context, {required bool isInline}) {
+    final media = MediaQuery.of(context);
+    final width = media.size.width;
+    final height = media.size.height;
+
+    if (isInline) {
+      if (width < 900 || height < 600) {
+        return 16.0;
+      } else if (width < 1200 || height < 750) {
+        return 19.0;
+      } else {
+        return 24.0;
+      }
+    } else {
+      if (width < 700 || height < 550) {
+        return 14.0;
+      } else if (width < 950 || height < 700) {
+        return 16.0;
+      } else {
+        return 18.0;
+      }
+    }
+  }
+
+  Widget _buildLyricsView({
+    ScrollController? controller,
+    bool isModal = false,
+    bool isPreview = false,
+    int? activeLineIndex,
+  }) {
+    final isMobile = MediaQuery.of(context).size.width < 700;
+    final fontSize = isMobile ? 18.0 : _getResponsiveLyricsFontSize(context, isInline: widget.isInline);
+    final isSmallWindow = MediaQuery.of(context).size.height < 650 || MediaQuery.of(context).size.width < 950;
+
     if (_lrcLines.isEmpty) {
-      // Check if there is plain lyrics
-      final plain = _enrichedMetadata != null ? (_enrichedMetadata as dynamic).lyricsText as String? : null;
-      if (plain != null && plain.isNotEmpty) {
+      final currentTrack = ref.read(playerProvider).currentTrack;
+      final plain = _enrichedMetadata?.lyricsText ??
+          currentTrack?.lyricsText ??
+          (_enrichedMetadata?.lyricsLrc != null && !_enrichedMetadata!.lyricsLrc!.contains('[') ? _enrichedMetadata!.lyricsLrc : null) ??
+          (currentTrack?.lyricsLrc != null && !currentTrack!.lyricsLrc!.contains('[') ? currentTrack.lyricsLrc : null);
+
+      if (plain != null && plain.trim().isNotEmpty) {
         return ScrollConfiguration(
           behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
           child: SingleChildScrollView(
-            child: Padding(
-              padding: EdgeInsets.only(
-                left: widget.isInline ? 64.0 : 16.0,
-                right: 24.0,
-                top: 40.0,
-                bottom: 40.0,
-              ),
-              child: Text(
-                plain,
-                style: TextStyle(
-                  fontSize: widget.isInline ? 22 : 16,
-                  height: 1.8,
-                  color: ZephyrColors.textDim,
-                ),
+            controller: controller,
+            physics: isPreview ? const NeverScrollableScrollPhysics() : const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+            child: Text(
+              plain,
+              style: TextStyle(
+                fontSize: fontSize,
+                height: 1.8,
+                color: ZephyrColors.textDim,
               ),
             ),
           ),
@@ -861,7 +1566,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
         // Synced Lyrics List View
         NotificationListener<ScrollNotification>(
           onNotification: (ScrollNotification notification) {
-            // If the user scrolls manually, disable automatic scrolling synchronization
             if (notification is UserScrollNotification &&
                 notification.direction != ScrollDirection.idle) {
               if (_isSynced) {
@@ -875,19 +1579,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
           child: ScrollConfiguration(
             behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
             child: ListView.builder(
-              controller: _lyricsScrollController,
+              controller: controller ?? _lyricsScrollController,
+              physics: isPreview ? const NeverScrollableScrollPhysics() : const BouncingScrollPhysics(),
               padding: EdgeInsets.only(
-                left: widget.isInline ? 64.0 : 24.0,
-                right: 24.0,
-                top: 100.0,
-                bottom: 100.0,
+                left: 16,
+                right: 16,
+                top: 32,
+                bottom: isPreview ? 24 : MediaQuery.of(context).size.height * 0.4,
               ),
               itemCount: _lrcLines.length,
               itemBuilder: (context, index) {
               final line = _lrcLines[index];
-              final isActive = index == _activeLrcIndex;
+              final isActive = index == (activeLineIndex ?? _activeLrcIndex);
               return Align(
-                key: _lyricKeys[index],
+                key: isModal
+                    ? (index < _modalLyricKeys.length ? _modalLyricKeys[index] : null)
+                    : (index < _lyricKeys.length ? _lyricKeys[index] : null),
                 alignment: Alignment.centerLeft,
                 child: InkWell(
                   onTap: () {
@@ -918,20 +1625,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                   borderRadius: BorderRadius.circular(8),
                   hoverColor: Colors.white.withValues(alpha: 0.05),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: isSmallWindow ? 8 : 12,
+                    ),
                     width: double.infinity,
-                    child: AnimatedDefaultTextStyle(
+                    child: AnimatedScale(
+                      scale: isActive ? 1.1 : 1.0,
                       duration: const Duration(milliseconds: 200),
-                      style: TextStyle(
-                        fontSize: widget.isInline
-                            ? (isActive ? 30 : 22)
-                            : (isActive ? 24 : 18),
-                        fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-                        color: isActive
-                            ? const Color(0xFFEEEEEE)
-                            : Colors.white.withValues(alpha: 0.35),
+                      alignment: Alignment.centerLeft,
+                      child: AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 200),
+                        style: TextStyle(
+                          fontSize: fontSize,
+                          fontWeight: FontWeight.w600,
+                          color: isActive
+                              ? Colors.white
+                              : Colors.white.withValues(alpha: 0.35),
+                        ),
+                        child: Text(line.text),
                       ),
-                      child: Text(line.text),
                     ),
                   ),
                 ),
@@ -956,40 +1669,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                 onPressed: () {
                   setState(() {
                     _isSynced = true;
+                    _hasInitialScrolled = false;
                   });
-                  // Immediately scroll back to active line
-                  if (_activeLrcIndex != -1 &&
-                      _activeLrcIndex < _lyricKeys.length &&
-                      _lyricsScrollController.hasClients &&
-                      _lyricsScrollController.position.hasContentDimensions) {
-                    final key = _lyricKeys[_activeLrcIndex];
-                    final context = key.currentContext;
-                    if (context != null) {
-                      Scrollable.ensureVisible(
-                        context,
-                        alignment: 0.5,
-                        duration: const Duration(milliseconds: 250),
-                        curve: Curves.easeOutCubic,
-                      );
-                    } else {
-                      final estimate = _activeLrcIndex * 58.0;
-                      _lyricsScrollController.jumpTo(
-                        estimate.clamp(0.0, _lyricsScrollController.position.maxScrollExtent),
-                      );
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (!mounted) return;
-                        final retryContext = key.currentContext;
-                        if (retryContext != null) {
-                          Scrollable.ensureVisible(
-                            retryContext,
-                            alignment: 0.5,
-                            duration: const Duration(milliseconds: 150),
-                            curve: Curves.easeOutCubic,
-                          );
-                        }
-                      });
-                    }
-                  }
+                  final pos = ref.read(playerProvider).position;
+                  _updateLyricsScrolling(pos);
                 },
                 icon: const Icon(Icons.sync, color: Colors.black, size: 16),
                 label: const Text(

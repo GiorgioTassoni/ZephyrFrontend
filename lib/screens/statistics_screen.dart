@@ -98,69 +98,96 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                     ],
                   ),
                 )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Listening Insights',
-                                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                              ),
-                              SizedBox(height: 4),
-                              Text(
-                                'Analyze your personal musical habits and metrics',
-                                style: TextStyle(color: ZephyrColors.textDim, fontSize: 14),
-                              ),
-                            ],
-                          ),
-                          _buildPeriodSelector(),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      _buildTabSelector(),
-                      const SizedBox(height: 32),
+              : Builder(
+                  builder: (context) {
+                    final isMobile = MediaQuery.of(context).size.width < 700;
 
-                      // Conditional Tab View
-                      if (_activeTab == StatsTab.overview) ...[
-                        // KPI Cards
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _buildKPICard(
-                                title: 'TOTAL LISTENS',
-                                value: '$_totalListens',
-                                icon: Icons.play_circle_outline,
-                                color: ZephyrColors.primary,
-                              ),
+                    final totalListensCard = _buildKPICard(
+                      title: 'TOTAL LISTENS',
+                      value: '$_totalListens',
+                      icon: Icons.play_circle_outline,
+                      color: ZephyrColors.primary,
+                    );
+                    final uniqueTracksCard = _buildKPICard(
+                      title: 'UNIQUE TRACKS',
+                      value: '$_uniqueTracks',
+                      icon: Icons.music_note_outlined,
+                      color: const Color(0xFF9C27B0),
+                    );
+                    final listenTimeCard = _buildKPICard(
+                      title: 'LISTEN TIME',
+                      value: _formatListenTime(_totalListenSeconds),
+                      icon: Icons.access_time_outlined,
+                      color: const Color(0xFF1DB954),
+                    );
+
+                    return SingleChildScrollView(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isMobile ? 16 : 40,
+                        vertical: isMobile ? 16 : 24,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (isMobile) ...[
+                            const Text(
+                              'Listening Insights',
+                              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                             ),
-                            const SizedBox(width: 24),
-                            Expanded(
-                              child: _buildKPICard(
-                                title: 'UNIQUE TRACKS',
-                                value: '$_uniqueTracks',
-                                icon: Icons.music_note_outlined,
-                                color: const Color(0xFF9C27B0),
-                              ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Analyze your personal musical habits and metrics',
+                              style: TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                             ),
-                            const SizedBox(width: 24),
-                            Expanded(
-                              child: _buildKPICard(
-                                title: 'LISTEN TIME',
-                                value: _formatListenTime(_totalListenSeconds),
-                                icon: Icons.access_time_outlined,
-                                color: const Color(0xFF1DB954),
-                              ),
+                            const SizedBox(height: 12),
+                            _buildPeriodSelector(),
+                          ] else ...[
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Listening Insights',
+                                      style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+                                    ),
+                                    SizedBox(height: 4),
+                                    Text(
+                                      'Analyze your personal musical habits and metrics',
+                                      style: TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+                                    ),
+                                  ],
+                                ),
+                                _buildPeriodSelector(),
+                              ],
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 40),
+                          const SizedBox(height: 20),
+                          _buildTabSelector(),
+                          const SizedBox(height: 24),
+
+                          // Conditional Tab View
+                          if (_activeTab == StatsTab.overview) ...[
+                            // KPI Cards
+                            if (isMobile) ...[
+                              totalListensCard,
+                              const SizedBox(height: 12),
+                              uniqueTracksCard,
+                              const SizedBox(height: 12),
+                              listenTimeCard,
+                            ] else ...[
+                              Row(
+                                children: [
+                                  Expanded(child: totalListensCard),
+                                  const SizedBox(width: 24),
+                                  Expanded(child: uniqueTracksCard),
+                                  const SizedBox(width: 24),
+                                  Expanded(child: listenTimeCard),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 32),
 
                         // Daily Activity Chart
                         if (_dailyActivity.isNotEmpty) ...[
@@ -175,7 +202,9 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                       ],
                     ],
                   ),
-                ),
+                );
+              },
+            ),
     );
   }
 

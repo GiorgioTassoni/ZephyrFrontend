@@ -130,7 +130,7 @@ class _ShareOptionCardState extends State<_ShareOptionCard> {
             color: _isHovered ? ZephyrColors.bgLight : ZephyrColors.bgDark,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: _isHovered ? ZephyrColors.primary.withOpacity(0.5) : ZephyrColors.bgLight,
+              color: _isHovered ? ZephyrColors.primary.withValues(alpha: 0.5) : ZephyrColors.bgLight,
               width: 1.5,
             ),
           ),
@@ -139,7 +139,7 @@ class _ShareOptionCardState extends State<_ShareOptionCard> {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: widget.iconColor.withOpacity(0.15),
+                  color: widget.iconColor.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(widget.icon, color: widget.iconColor, size: 24),

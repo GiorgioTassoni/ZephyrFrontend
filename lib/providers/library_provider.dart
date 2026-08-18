@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
+import '../utils/offline_storage.dart';
 import 'auth_provider.dart';
 import 'player_provider.dart';
 
@@ -58,19 +62,12 @@ class LibraryState {
 
 class LibraryNotifier extends Notifier<LibraryState> {
   final ZephyrApi _api = ZephyrApi();
-  Timer? _pollTimer;
 
   @override
   LibraryState build() {
     final authState = ref.watch(authProvider);
 
-    ref.onDispose(() {
-      _pollTimer?.cancel();
-    });
-
     if (!authState.isAuthenticated) {
-      _pollTimer?.cancel();
-      _pollTimer = null;
       return LibraryState();
     }
     Future.microtask(() => loadLibrary());
@@ -81,18 +78,37 @@ class LibraryNotifier extends Notifier<LibraryState> {
     if (!quiet) {
       state = state.copyWith(isLoading: true, errorMessage: null);
     }
+    unawaited(flushOfflineHistory());
     try {
-      final tracks = await _api.getDownloadedTracks();
-      final playlists = await _api.getPlaylists();
+      List<Track> serverTracks = [];
+      try {
+        serverTracks = await _api.getDownloadedTracks();
+      } catch (_) {}
+
+      final offlineTracks = OfflineStorageService().getAllOfflineTracks();
+      final Map<String, Track> mergedTracks = {
+        for (final t in serverTracks) t.videoId: t,
+        for (final t in offlineTracks) t.videoId: t,
+      };
+      final tracks = mergedTracks.values.toList();
+
+      List<Playlist> playlists = state.playlists;
+      try {
+        playlists = await _api.getPlaylists();
+      } catch (_) {}
+
       List<Track> favorites = state.favorites;
       try {
         favorites = await _api.getFavorites(offset: 0);
       } catch (_) {}
-      final history = await _api.getHistory();
+
+      List<HistoryEntry> history = state.history;
+      try {
+        history = await _api.getHistory();
+      } catch (_) {}
 
       // Enrich history entries with track metadata
       final List<HistoryEntry> enrichedHistoryList = [];
-      final List<Future<void>> enrichmentFutures = [];
 
       for (final entry in history) {
         Track? matchedTrack = entry.track;
@@ -119,26 +135,8 @@ class LibraryNotifier extends Notifier<LibraryState> {
             track: matchedTrack,
           ));
         } else {
-          // If we couldn't match locally or artists is empty, fetch from the API!
-          final future =
-              _api.getTrackMetadata(entry.trackId).then((trackMeta) {
-            enrichedHistoryList.add(HistoryEntry(
-              id: entry.id,
-              userId: entry.userId,
-              trackId: entry.trackId,
-              listenedAt: entry.listenedAt,
-              track: trackMeta,
-            ));
-          }).catchError((_) {
-            // If API fetch fails, still add the entry (without track metadata)
-            enrichedHistoryList.add(entry);
-          });
-          enrichmentFutures.add(future);
+          enrichedHistoryList.add(entry);
         }
-      }
-
-      if (enrichmentFutures.isNotEmpty) {
-        await Future.wait(enrichmentFutures);
       }
 
       // Sort history entries back to descending listenedAt order
@@ -173,9 +171,6 @@ class LibraryNotifier extends Notifier<LibraryState> {
           }
         }
       }
-
-      // Check if we need to start/stop quiet background status checking
-      _checkAndStartDownloadPolling(tracks, favorites);
     } catch (e, stackTrace) {
       print("Library load error: $e");
       print(stackTrace);
@@ -183,35 +178,6 @@ class LibraryNotifier extends Notifier<LibraryState> {
         isLoading: false,
         errorMessage: 'Failed to load library: $e',
       );
-    }
-  }
-
-  bool _hasActiveDownloads(List<Track> downloaded, List<Track> favorites) {
-    final activeInDownloaded = downloaded.any((t) =>
-        t.downloadStatus == 'downloading' || t.downloadStatus == 'pending');
-    final activeInFavorites = favorites.any((t) =>
-        t.downloadStatus == 'downloading' || t.downloadStatus == 'pending');
-    return activeInDownloaded || activeInFavorites;
-  }
-
-  void _checkAndStartDownloadPolling(
-      List<Track> downloaded, List<Track> favorites) {
-    if (_hasActiveDownloads(downloaded, favorites)) {
-      if (_pollTimer == null || !_pollTimer!.isActive) {
-        _pollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
-          // Check if we are still authenticated before polling
-          final auth = ref.read(authProvider);
-          if (!auth.isAuthenticated) {
-            timer.cancel();
-            _pollTimer = null;
-            return;
-          }
-          await loadLibrary(quiet: true);
-        });
-      }
-    } else {
-      _pollTimer?.cancel();
-      _pollTimer = null;
     }
   }
 
@@ -327,8 +293,6 @@ class LibraryNotifier extends Notifier<LibraryState> {
       // Reload downloaded tracks, since adding to favorites might auto-download
       final updatedTracks = await _api.getDownloadedTracks();
       state = state.copyWith(downloadedTracks: updatedTracks);
-      // Kick off background status checking in case auto-download began
-      _checkAndStartDownloadPolling(updatedTracks, state.favorites);
     } catch (e) {
       // Revert on error
       loadLibrary();
@@ -445,6 +409,81 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
+  String _generateUuidV4() {
+    final random = Random.secure();
+    final values = List<int>.generate(16, (i) => random.nextInt(256));
+    values[6] = (values[6] & 0x0f) | 0x40; // version 4
+    values[8] = (values[8] & 0x3f) | 0x80; // IETF variant
+    return [
+      values.sublist(0, 4).map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
+      values.sublist(4, 6).map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
+      values.sublist(6, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
+      values.sublist(8, 10).map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
+      values.sublist(10, 16).map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
+    ].join('-');
+  }
+
+  static const String _offlineHistoryBufferKey = 'offline_history_buffer';
+
+  Future<void> recordListen(String trackId, [Track? track]) async {
+    if (track != null) {
+      await addListeningHistory(track);
+    }
+    final clientId = _generateUuidV4();
+    final playedAt = DateTime.now().toUtc().toIso8601String();
+    try {
+      await _api.recordListen(trackId);
+    } catch (_) {
+      // Offline or network error: buffer locally for sync
+      await _bufferOfflineListen({
+        'track_id': trackId,
+        'played_at': playedAt,
+        'client_id': clientId,
+      });
+    }
+  }
+
+  Future<void> _bufferOfflineListen(Map<String, dynamic> entry) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawList = prefs.getStringList(_offlineHistoryBufferKey) ?? [];
+      rawList.add(jsonEncode(entry));
+      await prefs.setStringList(_offlineHistoryBufferKey, rawList);
+    } catch (_) {}
+  }
+
+  Future<void> flushOfflineHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawList = prefs.getStringList(_offlineHistoryBufferKey) ?? [];
+      if (rawList.isEmpty) return;
+
+      final List<Map<String, dynamic>> buffered = [];
+      for (final item in rawList) {
+        try {
+          buffered.add(Map<String, dynamic>.from(jsonDecode(item)));
+        } catch (_) {}
+      }
+      if (buffered.isEmpty) {
+        await prefs.remove(_offlineHistoryBufferKey);
+        return;
+      }
+
+      // Max 1000 items per request
+      const int batchCap = 1000;
+      for (var i = 0; i < buffered.length; i += batchCap) {
+        final end = (i + batchCap < buffered.length) ? i + batchCap : buffered.length;
+        final chunk = buffered.sublist(i, end);
+        await _api.syncHistory(chunk);
+      }
+
+      await prefs.remove(_offlineHistoryBufferKey);
+      await handleLibraryEvent(scope: 'history');
+    } catch (_) {
+      // Keep in buffer for next retry
+    }
+  }
+
   Future<void> addListeningHistory(Track track) async {
     // Add listening history entry locally to feel instantaneous
     final currentHistory = List<HistoryEntry>.from(state.history);
@@ -468,6 +507,121 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
 
     state = state.copyWith(history: currentHistory);
+  }
+
+  Future<void> handleLibraryEvent({
+    String? scope,
+    String? action,
+    dynamic playlistId,
+    String? trackId,
+  }) async {
+    try {
+      if (scope == 'favorites') {
+        final page = await _api.getFavorites(offset: 0);
+        state = state.copyWith(
+          favorites: page,
+          favoritesOffset: page.length,
+          hasMoreFavorites: page.length >= LibraryState._pageSize,
+        );
+      } else if (scope == 'playlists') {
+        final playlists = await _api.getPlaylists();
+        state = state.copyWith(playlists: playlists);
+      } else if (scope == 'history') {
+        final history = await _api.getHistory();
+        final List<HistoryEntry> enrichedHistoryList = [];
+        for (final entry in history) {
+          Track? matched = state.downloadedTracks.cast<Track?>().firstWhere(
+            (t) => t?.videoId == entry.trackId,
+            orElse: () => null,
+          ) ?? state.favorites.cast<Track?>().firstWhere(
+            (t) => t?.videoId == entry.trackId,
+            orElse: () => null,
+          );
+          if (matched != null) {
+            enrichedHistoryList.add(HistoryEntry(
+              id: entry.id,
+              userId: entry.userId,
+              trackId: entry.trackId,
+              listenedAt: entry.listenedAt,
+              track: matched,
+            ));
+          } else {
+            enrichedHistoryList.add(entry);
+          }
+        }
+        enrichedHistoryList.sort((a, b) => b.listenedAt.compareTo(a.listenedAt));
+        state = state.copyWith(history: enrichedHistoryList);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> handleTrackStatusEvent({
+    required String trackId,
+    required String downloadStatus,
+  }) async {
+    final bool isCompleted = downloadStatus == 'completed';
+
+    // 1. Update favorites list
+    final updatedFavorites = state.favorites.map((t) {
+      if (t.videoId == trackId || t.videoId == 'dz_$trackId' || trackId == 'dz_${t.videoId}') {
+        return t.copyWith(
+          downloadStatus: downloadStatus,
+          isDownloaded: isCompleted,
+        );
+      }
+      return t;
+    }).toList();
+
+    // 2. Update playlists tracks
+    final updatedPlaylists = state.playlists.map((p) {
+      if (p.tracks == null || p.tracks!.isEmpty) return p;
+      final updatedTracks = p.tracks!.map((t) {
+        if (t.videoId == trackId || t.videoId == 'dz_$trackId' || trackId == 'dz_${t.videoId}') {
+          return t.copyWith(
+            downloadStatus: downloadStatus,
+            isDownloaded: isCompleted,
+          );
+        }
+        return t;
+      }).toList();
+      return Playlist(
+        id: p.id,
+        userId: p.userId,
+        name: p.name,
+        description: p.description,
+        coverPath: p.coverPath,
+        isPublic: p.isPublic,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+        tracks: updatedTracks,
+      );
+    }).toList();
+
+    // 3. Update downloaded tracks
+    List<Track> updatedDownloaded = List.from(state.downloadedTracks);
+    final downloadIndex = updatedDownloaded.indexWhere(
+      (t) => t.videoId == trackId || t.videoId == 'dz_$trackId' || trackId == 'dz_${t.videoId}',
+    );
+
+    if (downloadIndex != -1) {
+      updatedDownloaded[downloadIndex] = updatedDownloaded[downloadIndex].copyWith(
+        downloadStatus: downloadStatus,
+        isDownloaded: isCompleted,
+      );
+    } else if (isCompleted) {
+      try {
+        final newMeta = await _api.getTrackMetadata(trackId);
+        if (!updatedDownloaded.any((t) => t.videoId == newMeta.videoId)) {
+          updatedDownloaded.insert(0, newMeta);
+        }
+      } catch (_) {}
+    }
+
+    state = state.copyWith(
+      favorites: updatedFavorites,
+      playlists: updatedPlaylists,
+      downloadedTracks: updatedDownloaded,
+    );
   }
 }
 

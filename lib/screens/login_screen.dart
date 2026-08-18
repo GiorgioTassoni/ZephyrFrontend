@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/auth_provider.dart';
@@ -75,7 +74,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               border: Border.all(color: ZephyrColors.bgLight),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.5),
+                  color: Colors.black.withValues(alpha: 0.5),
                   blurRadius: 20,
                   offset: const Offset(0, 10),
                 ),
@@ -214,9 +213,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: ZephyrColors.error.withOpacity(0.1),
+                        color: ZephyrColors.error.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: ZephyrColors.error.withOpacity(0.3)),
+                        border: Border.all(color: ZephyrColors.error.withValues(alpha: 0.3)),
                       ),
                       child: Row(
                         children: [

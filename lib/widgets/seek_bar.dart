@@ -4,12 +4,14 @@ import '../theme/colors.dart';
 class SeekBar extends StatefulWidget {
   final Duration position;
   final Duration duration;
+  final bool isLoading;
   final ValueChanged<Duration> onChangeEnd;
 
   const SeekBar({
     super.key,
     required this.position,
     required this.duration,
+    this.isLoading = false,
     required this.onChangeEnd,
   });
 
@@ -23,7 +25,9 @@ class _SeekBarState extends State<SeekBar> {
   @override
   Widget build(BuildContext context) {
     final max = widget.duration.inMilliseconds.toDouble();
-    final value = _dragValue ?? widget.position.inMilliseconds.toDouble();
+    final value = widget.isLoading
+        ? 0.0
+        : (_dragValue ?? widget.position.inMilliseconds.toDouble());
 
     // Clamp value to safe bounds
     final clampedValue = value.clamp(0.0, max > 0.0 ? max : 0.0);
@@ -44,7 +48,7 @@ class _SeekBarState extends State<SeekBar> {
               activeTrackColor: ZephyrColors.primary,
               inactiveTrackColor: ZephyrColors.bgLight,
               thumbColor: ZephyrColors.primary,
-              overlayColor: ZephyrColors.primary.withOpacity(0.2),
+              overlayColor: ZephyrColors.primary.withValues(alpha: 0.2),
             ),
             child: Slider(
               min: 0.0,

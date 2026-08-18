@@ -40,7 +40,9 @@ class CoverImage extends ConsumerWidget {
         borderRadius: BorderRadius.circular(borderRadius),
       ),
       child: Icon(
-        playlistId != null ? Icons.playlist_play : Icons.music_note,
+        playlistId != null
+            ? Icons.playlist_play
+            : (borderRadius >= size * 0.4 ? Icons.person_rounded : Icons.music_note_rounded),
         color: ZephyrColors.textDim,
         size: size * 0.5,
       ),
@@ -83,12 +85,15 @@ class CoverImage extends ConsumerWidget {
       );
     }
 
-    // 2. Direct Network Cover Image or Server Cover Path
-    if (coverUrl != null && coverUrl!.isNotEmpty) {
-      return _buildNetworkImage(coverUrl!, size, placeholder, token);
+    // 2. Network / Relative Cover Image URL
+    if (coverUrl != null &&
+        coverUrl!.isNotEmpty &&
+        !coverUrl!.contains('/var/lib/') &&
+        (coverUrl!.startsWith('http://') || coverUrl!.startsWith('https://') || coverUrl!.startsWith('/'))) {
+      return _buildNetworkImage(coverUrl!, size, placeholder, token, fallbackVideoId: videoId);
     }
 
-    // 3. Track Cover Image Endpoint (using canonical track ID)
+    // 3. Local Track Cover Image Endpoint (using canonical track ID)
     if (videoId != null && videoId!.isNotEmpty) {
       String url = api.getCoverUrl(videoId!);
       return _buildNetworkImage(url, size, placeholder, token);
@@ -97,7 +102,7 @@ class CoverImage extends ConsumerWidget {
     return placeholder;
   }
 
-  Widget _buildNetworkImage(String url, double size, Widget placeholder, String? token) {
+  Widget _buildNetworkImage(String url, double size, Widget placeholder, String? token, {String? fallbackVideoId}) {
     final api = ZephyrApi();
     String fullUrl = url;
     if (fullUrl.startsWith('/')) {
@@ -113,8 +118,9 @@ class CoverImage extends ConsumerWidget {
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     };
 
-    if (isZephyrApi && token != null) {
-      headers['Authorization'] = 'Bearer $token';
+    final activeToken = token ?? api.token;
+    if (isZephyrApi && activeToken != null && activeToken.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $activeToken';
     }
 
     return ClipRRect(
@@ -126,7 +132,15 @@ class CoverImage extends ConsumerWidget {
         fit: BoxFit.cover,
         httpHeaders: headers,
         placeholder: (context, url) => placeholder,
-        errorWidget: (context, url, error) => placeholder,
+        errorWidget: (context, url, error) {
+          if (fallbackVideoId != null && fallbackVideoId.isNotEmpty) {
+            final fallbackUrl = api.getCoverUrl(fallbackVideoId);
+            if (fallbackUrl != url) {
+              return _buildNetworkImage(fallbackUrl, size, placeholder, token);
+            }
+          }
+          return placeholder;
+        },
       ),
     );
   }

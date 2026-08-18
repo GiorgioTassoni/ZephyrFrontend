@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../providers/navigation_provider.dart';
 import '../providers/library_provider.dart';
 import '../theme/colors.dart';
+import '../theme/zephyr_theme.dart';
 import '../widgets/album_card.dart';
 import '../widgets/track_tile.dart';
 
@@ -111,12 +112,29 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                               ),
                               fit: BoxFit.cover,
                               colorFilter: ColorFilter.mode(
-                                Colors.black.withOpacity(0.5),
+                                Colors.black.withValues(alpha: 0.45),
                                 BlendMode.multiply,
                               ),
                             )
                           : null,
                       color: ZephyrColors.bgCard,
+                    ),
+                  ),
+                  // Ambient Bottom Fade Gradient
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            ZephyrColors.bgDark.withValues(alpha: 0.8),
+                            ZephyrColors.bgDark,
+                          ],
+                          stops: const [0.3, 0.85, 1.0],
+                        ),
+                      ),
                     ),
                   ),
                   Positioned(
@@ -126,15 +144,29 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.verified, color: Colors.blue, size: 20),
-                            const SizedBox(width: 8),
-                            const Text(
-                              'Verified Artist',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                            ),
-                          ],
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: ZephyrTheme.accentInfo.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: ZephyrTheme.accentInfo.withValues(alpha: 0.4)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.verified, color: ZephyrTheme.accentInfo, size: 16),
+                              SizedBox(width: 6),
+                              Text(
+                                'VERIFIED ARTIST',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: ZephyrTheme.accentInfo,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 8),
                         Text(

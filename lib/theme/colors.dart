@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class ZephyrColors {
   static const Color primary = Color(0xFFF59E0B); // Amber Zephyr
@@ -15,39 +16,41 @@ class ZephyrColors {
   static const Color success = Color(0xFF1DB954);  // Green (e.g. download complete check)
 
   static ThemeData get darkTheme {
+    final baseTheme = ThemeData.dark();
+    final interTheme = GoogleFonts.interTextTheme(baseTheme.textTheme);
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bgDark,
+      textTheme: interTheme,
       colorScheme: const ColorScheme.dark(
         primary: primary,
         secondary: primary,
-        background: bgDark,
         surface: bgCard,
         error: error,
       ),
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: bgDark,
         elevation: 0,
-        iconTheme: IconThemeData(color: text),
-        titleTextStyle: TextStyle(
+        iconTheme: const IconThemeData(color: text),
+        titleTextStyle: GoogleFonts.inter(
           color: text,
           fontSize: 20,
-          fontWeight: FontWeight.bold,
-          fontFamily: 'Inter',
+          fontWeight: FontWeight.w600,
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: bgDark,
-        indicatorColor: primary.withOpacity(0.2),
-        iconTheme: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
+        indicatorColor: primary.withValues(alpha: 0.2),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
             return const IconThemeData(color: primary);
           }
           return const IconThemeData(color: textDim);
         }),
-        labelTextStyle: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
             return const TextStyle(color: primary, fontWeight: FontWeight.bold);
           }
           return const TextStyle(color: textDim);

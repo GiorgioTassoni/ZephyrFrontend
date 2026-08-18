@@ -37,12 +37,18 @@ dependencies:
   flutter_riverpod: ^3.3.2
   dio: ^5.10.0
   audioplayers: ^6.8.1
+  just_audio: ^0.9.46
+  audio_service: ^0.18.18
+  flutter_carplay: ^1.6.4
   cached_network_image: ^3.4.1
   shared_preferences: ^2.5.5
-  file_picker: ^11.0.2
+  file_picker: ^8.1.7
   path_provider: ^2.1.6
   intl: ^0.20.3
   ffi: ^2.1.2
+  dbus: ^0.7.10
+  mpris: ^1.1.0
+  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:
@@ -54,6 +60,23 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "References/Zephyr.png"
+  min_sdk_android: 21
+  web:
+    generate: true
+    image_path: "References/Zephyr.png"
+  windows:
+    generate: true
+    image_path: "References/Zephyr.png"
+    icon_size: 48
+  linux:
+    generate: true
+    image_path: "References/Zephyr.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -69,6 +92,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - References/Zephyr_trasp.png
+    - References/Zephyr.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

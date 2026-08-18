@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../providers/navigation_provider.dart';
 import '../providers/search_provider.dart';
 import '../theme/colors.dart';
+import '../theme/zephyr_theme.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/track_tile.dart';
 
@@ -22,7 +23,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   
   Timer? _debounceTimer;
   bool _isLoading = false;
-  bool _hasRemote = false;
   String _remoteSource = 'none';
   String _lastQuery = '';
   
@@ -43,7 +43,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void _onSearchChanged(String query) {
     _debounceTimer?.cancel();
     final cleanQuery = query.trim();
-    if (cleanQuery.length < 4) {
+    if (cleanQuery.length < 2) {
       setState(() {
         _tracks = [];
         _videos = [];
@@ -51,7 +51,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         _artists = [];
         _playlists = [];
         _isLoading = false;
-        _hasRemote = false;
         _remoteSource = 'none';
         _errorMessage = null;
         _lastQuery = cleanQuery;
@@ -84,7 +83,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       final List rawPlaylists = results['playlists'] ?? [];
 
       final remoteSrc = (res['remote_source'] ?? 'none').toString();
-      final hasRem = res['has_remote'] ?? false;
  
       setState(() {
         _tracks = rawTracks.map((e) => Track.fromJson(Map<String, dynamic>.from(e))).toList();
@@ -92,7 +90,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         _albums = rawAlbums.map((e) => Album.fromJson(Map<String, dynamic>.from(e))).toList();
         _artists = rawArtists.map((e) => Artist.fromJson(Map<String, dynamic>.from(e))).toList();
         _playlists = rawPlaylists.map((e) => Playlist.fromJson(Map<String, dynamic>.from(e))).toList();
-        _hasRemote = hasRem;
         _remoteSource = remoteSrc;
         _isLoading = false;
       });
@@ -120,12 +117,61 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       });
     }
 
+    final isMobile = MediaQuery.of(context).size.width < 700;
+
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Search Results or Browse Categories
+          if (isMobile)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: ZephyrColors.bgCard,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: ZephyrColors.bgLight.withValues(alpha: 0.6)),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.search, color: ZephyrColors.textDim, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        autofocus: false,
+                        style: const TextStyle(color: ZephyrColors.text, fontSize: 14),
+                        onChanged: (val) {
+                          ref.read(searchQueryProvider.notifier).setQuery(val);
+                          _onSearchChanged(val);
+                        },
+                        decoration: const InputDecoration(
+                          hintText: 'What do you want to listen to?',
+                          hintStyle: TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                    if (_searchController.text.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(Icons.clear, color: ZephyrColors.textDim, size: 18),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () {
+                          _searchController.clear();
+                          ref.read(searchQueryProvider.notifier).setQuery('');
+                          _onSearchChanged('');
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ),
           Expanded(
             child: _isLoading
                 ? const Center(
@@ -149,29 +195,34 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   // Categories shown when search field is empty (matching unfilled search page)
   Widget _buildBrowseCategories() {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.music_note, size: 64, color: ZephyrColors.textDim),
-          SizedBox(height: 16),
-          Text(
-            'Search for songs, albums, or artists',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: ZephyrColors.text,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.music_note, size: 64, color: ZephyrColors.textDim),
+            SizedBox(height: 16),
+            Text(
+              'Search for songs, albums, or artists',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: ZephyrColors.text,
+              ),
             ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            'Results are searched locally first, falling back to Deezer discovery.',
-            style: TextStyle(
-              fontSize: 14,
-              color: ZephyrColors.textDim,
+            SizedBox(height: 8),
+            Text(
+              'Results are searched locally first, falling back to Deezer discovery.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: ZephyrColors.textDim,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -189,12 +240,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             const SizedBox(height: 16),
             if (_remoteSource == 'none')
               ElevatedButton.icon(
-                icon: const Icon(Icons.cloud_download, color: Colors.black),
-                label: const Text('Search on Deezer', style: TextStyle(color: Colors.black)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: ZephyrColors.primary,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                ),
+                icon: const Icon(Icons.cloud_download_rounded, size: 18),
+                label: const Text('Search on Deezer'),
+                style: ZephyrTheme.primaryPillStyle(),
                 onPressed: () => _performSearch(_lastQuery, forceRemote: true),
               ),
           ],
@@ -202,49 +250,87 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       );
     }
 
-    // Only show prompt banner if remote discovery was NOT executed yet and local-only results exist
-    final showOnlinePrompt = _remoteSource == 'none' && _hasRemote;
+    final isMobile = MediaQuery.of(context).size.width < 700;
+    final showOnlinePrompt = _remoteSource == 'none';
 
     return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 14 : 32,
+        vertical: isMobile ? 12 : 24,
+      ),
       children: [
         if (showOnlinePrompt) ...[
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: ZephyrColors.bgCard,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: ZephyrColors.primary.withOpacity(0.3)),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: ZephyrColors.primary.withValues(alpha: 0.4)),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Expanded(
-                  child: Column(
+            child: isMobile
+                ? Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Deezer Discovery',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                      const Row(
+                        children: [
+                          Icon(Icons.library_music_rounded, color: ZephyrColors.primary, size: 18),
+                          SizedBox(width: 8),
+                          Text(
+                            'Local Library Results',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                          ),
+                        ],
                       ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Matches were found in your local library. Click here to fetch additional tracks online via Deezer.',
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Showing results from your local library. Click below to discover songs & artists on Deezer.',
                         style: TextStyle(fontSize: 12, color: ZephyrColors.textDim),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.public_rounded, size: 16),
+                          label: const Text('Search Online on Deezer'),
+                          style: ZephyrTheme.primaryPillStyle(),
+                          onPressed: () => _performSearch(_lastQuery, forceRemote: true),
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.library_music_rounded, color: ZephyrColors.primary, size: 18),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Local Library Results',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Showing results from your local library. Click "Search Online" to discover songs & artists on Deezer.',
+                              style: TextStyle(fontSize: 12, color: ZephyrColors.textDim),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.public_rounded, size: 16),
+                        label: const Text('Search Online'),
+                        style: ZephyrTheme.primaryPillStyle(),
+                        onPressed: () => _performSearch(_lastQuery, forceRemote: true),
                       ),
                     ],
                   ),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: ZephyrColors.primary,
-                    foregroundColor: Colors.black,
-                  ),
-                  onPressed: () => _performSearch(_lastQuery, forceRemote: true),
-                  child: const Text('Search Online'),
-                ),
-              ],
-            ),
           ),
           const SizedBox(height: 24),
         ],
@@ -261,7 +347,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _tracks.length,
             itemBuilder: (context, index) {
-              return TrackTile(track: _tracks[index], queue: [_tracks[index]]);
+              return TrackTile(
+                track: _tracks[index],
+                queue: [_tracks[index]],
+                origin: 'search',
+              );
             },
           ),
           const SizedBox(height: 24),
@@ -279,7 +369,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _videos.length,
             itemBuilder: (context, index) {
-              return TrackTile(track: _videos[index], queue: [_videos[index]]);
+              return TrackTile(
+                track: _videos[index],
+                queue: [_videos[index]],
+                origin: 'search',
+              );
             },
           ),
           const SizedBox(height: 24),
@@ -293,28 +387,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 140,
+            height: 72,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               itemCount: _albums.length,
               itemBuilder: (context, index) {
                 final album = _albums[index];
-                return Container(
-                  width: 320,
-                  margin: const EdgeInsets.only(right: 16),
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: ListTile(
-                      leading: CoverImage(coverUrl: album.coverUrl, size: 50),
-                      title: Text(album.name, overflow: TextOverflow.ellipsis),
-                      subtitle: Text(album.artists.join(', '), overflow: TextOverflow.ellipsis),
-                      tileColor: ZephyrColors.bgCard,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      onTap: () {
-                        navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: album.id));
-                      },
-                    ),
-                  ),
+                return _SearchAlbumCard(
+                  album: album,
+                  onTap: () {
+                    navNotifier.navigateTo(ScreenState(type: ScreenType.album, id: album.id));
+                  },
                 );
               },
             ),
@@ -336,49 +419,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               itemCount: _artists.length,
               itemBuilder: (context, index) {
                 final artist = _artists[index];
-                return Container(
-                  width: 220,
-                  margin: const EdgeInsets.only(right: 16),
-                  decoration: BoxDecoration(
-                    color: ZephyrColors.bgCard,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: () {
-                        navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: artist.channelId));
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            CoverImage(
-                              coverUrl: artist.coverUrl,
-                              size: 48,
-                              borderRadius: 24,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                artist.name,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 2,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: ZephyrColors.text,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                return _SearchArtistCard(
+                  artist: artist,
+                  onTap: () {
+                    navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: artist.channelId));
+                  },
                 );
               },
             ),
@@ -394,28 +439,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 140,
+            height: 72,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               itemCount: _playlists.length,
               itemBuilder: (context, index) {
                 final playlist = _playlists[index];
-                return Container(
-                  width: 320,
-                  margin: const EdgeInsets.only(right: 16),
-                  child: Material(
-                    color: ZephyrColors.bgCard,
-                    borderRadius: BorderRadius.circular(8),
-                    clipBehavior: Clip.antiAlias,
-                    child: ListTile(
-                      leading: CoverImage(coverUrl: playlist.coverUrl, playlistId: playlist.id, size: 50),
-                      title: Text(playlist.name, overflow: TextOverflow.ellipsis),
-                      subtitle: Text(playlist.ownerName ?? 'Deezer', overflow: TextOverflow.ellipsis),
-                      onTap: () {
-                        navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, id: playlist.id.toString()));
-                      },
-                    ),
-                  ),
+                return _SearchPlaylistCard(
+                  playlist: playlist,
+                  onTap: () {
+                    navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, id: playlist.id.toString()));
+                  },
                 );
               },
             ),
@@ -423,6 +457,225 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           const SizedBox(height: 24),
         ],
       ],
+    );
+  }
+}
+
+class _SearchAlbumCard extends StatefulWidget {
+  final Album album;
+  final VoidCallback onTap;
+
+  const _SearchAlbumCard({required this.album, required this.onTap});
+
+  @override
+  State<_SearchAlbumCard> createState() => _SearchAlbumCardState();
+}
+
+class _SearchAlbumCardState extends State<_SearchAlbumCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: SystemMouseCursors.click,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 280,
+        margin: const EdgeInsets.only(right: 16),
+        decoration: BoxDecoration(
+          color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.5) : ZephyrColors.bgCard,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: ZephyrColors.bgLight.withValues(alpha: 0.3),
+            width: 1.0,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: widget.onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                CoverImage(coverUrl: widget.album.coverUrl, size: 56, borderRadius: 6),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.album.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.album.artists.join(', '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: ZephyrColors.textDim),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchArtistCard extends StatefulWidget {
+  final Artist artist;
+  final VoidCallback onTap;
+
+  const _SearchArtistCard({required this.artist, required this.onTap});
+
+  @override
+  State<_SearchArtistCard> createState() => _SearchArtistCardState();
+}
+
+class _SearchArtistCardState extends State<_SearchArtistCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: SystemMouseCursors.click,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 220,
+        margin: const EdgeInsets.only(right: 16),
+        decoration: BoxDecoration(
+          color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.5) : ZephyrColors.bgCard,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: ZephyrColors.bgLight.withValues(alpha: 0.3),
+            width: 1.0,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: widget.onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                CoverImage(
+                  coverUrl: widget.artist.coverUrl,
+                  size: 48,
+                  borderRadius: 24,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    widget.artist.name,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: ZephyrColors.text,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchPlaylistCard extends StatefulWidget {
+  final Playlist playlist;
+  final VoidCallback onTap;
+
+  const _SearchPlaylistCard({required this.playlist, required this.onTap});
+
+  @override
+  State<_SearchPlaylistCard> createState() => _SearchPlaylistCardState();
+}
+
+class _SearchPlaylistCardState extends State<_SearchPlaylistCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: SystemMouseCursors.click,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 280,
+        margin: const EdgeInsets.only(right: 16),
+        decoration: BoxDecoration(
+          color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.5) : ZephyrColors.bgCard,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: ZephyrColors.bgLight.withValues(alpha: 0.3),
+            width: 1.0,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: widget.onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                CoverImage(
+                  coverUrl: widget.playlist.coverUrl,
+                  playlistId: widget.playlist.id,
+                  size: 56,
+                  borderRadius: 6,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.playlist.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.playlist.ownerName ?? 'Deezer',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: ZephyrColors.textDim),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

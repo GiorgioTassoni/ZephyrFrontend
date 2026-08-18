@@ -7,7 +7,8 @@ class Track {
   final String? album;
   final String? albumId;
   final Duration? duration;
-  final String downloadStatus; // 'completed', 'pending', 'failed', 'downloading', 'discovered', 'not_in_db', 'needs_resolution', 'unavailable'
+  final String
+  downloadStatus; // 'completed', 'pending', 'failed', 'downloading', 'discovered', 'not_in_db', 'needs_resolution', 'unavailable'
   final String? videoType; // 'ATV' (audio) or 'OMV' (official music video)
   final String? localPath;
   final String? localCoverPath;
@@ -15,6 +16,7 @@ class Track {
   final bool isDownloaded;
   final String? lyricsText;
   final String? lyricsLrc;
+  final String? reason; // 'same_album' | 'same_artist' | 'similar_artist'
 
   Track({
     required this.videoId,
@@ -33,15 +35,25 @@ class Track {
     required this.isDownloaded,
     this.lyricsText,
     this.lyricsLrc,
+    this.reason,
   });
 
   bool get needsResolution => downloadStatus == 'needs_resolution';
   bool get isUnavailable => downloadStatus == 'unavailable';
   bool get isVideoVersion => videoType == 'OMV';
+  bool get isLocal =>
+      isDownloaded ||
+      localPath != null ||
+      downloadStatus == 'completed' ||
+      videoId.startsWith('loc_');
 
   factory Track.fromJson(Map<String, dynamic> json) {
     // Determine canonical track ID (track_id ?? id ?? video_id ?? videoId)
-    String rawVId = (json['track_id'] ?? json['id'] ?? json['video_id'] ?? json['videoId'])?.toString().trim() ?? '';
+    String rawVId =
+        (json['track_id'] ?? json['id'] ?? json['video_id'] ?? json['videoId'])
+            ?.toString()
+            .trim() ??
+        '';
     if (rawVId == 'null') rawVId = '';
 
     String vId = rawVId;
@@ -56,7 +68,8 @@ class Track {
     List<String> artistsList = [];
     List<String> artistsIdsList = [];
 
-    dynamic rawArtists = json['artists'] ??
+    dynamic rawArtists =
+        json['artists'] ??
         json['artist'] ??
         json['artist_name'] ??
         json['artist_names'] ??
@@ -78,8 +91,18 @@ class Track {
       } else if (rawArtists is List) {
         for (final e in rawArtists) {
           if (e is Map) {
-            final name = (e['name'] ?? e['title'] ?? e['artist'] ?? '').toString().trim();
-            final id = (e['id'] ?? e['channel_id'] ?? e['artist_id'] ?? e['browse_id'] ?? e['channelId'] ?? '').toString().trim();
+            final name = (e['name'] ?? e['title'] ?? e['artist'] ?? '')
+                .toString()
+                .trim();
+            final id =
+                (e['id'] ??
+                        e['channel_id'] ??
+                        e['artist_id'] ??
+                        e['browse_id'] ??
+                        e['channelId'] ??
+                        '')
+                    .toString()
+                    .trim();
             if (name.isNotEmpty) artistsList.add(name);
             if (id.isNotEmpty) {
               final formattedId = RegExp(r'^\d+$').hasMatch(id) ? 'dz_$id' : id;
@@ -91,8 +114,22 @@ class Track {
           }
         }
       } else if (rawArtists is Map) {
-        final name = (rawArtists['name'] ?? rawArtists['title'] ?? rawArtists['artist'] ?? '').toString().trim();
-        final id = (rawArtists['id'] ?? rawArtists['channel_id'] ?? rawArtists['artist_id'] ?? rawArtists['browse_id'] ?? rawArtists['channelId'] ?? '').toString().trim();
+        final name =
+            (rawArtists['name'] ??
+                    rawArtists['title'] ??
+                    rawArtists['artist'] ??
+                    '')
+                .toString()
+                .trim();
+        final id =
+            (rawArtists['id'] ??
+                    rawArtists['channel_id'] ??
+                    rawArtists['artist_id'] ??
+                    rawArtists['browse_id'] ??
+                    rawArtists['channelId'] ??
+                    '')
+                .toString()
+                .trim();
         if (name.isNotEmpty) artistsList.add(name);
         if (id.isNotEmpty) {
           final formattedId = RegExp(r'^\d+$').hasMatch(id) ? 'dz_$id' : id;
@@ -103,41 +140,75 @@ class Track {
 
     // Fallback if artistsList is still empty
     if (artistsList.isEmpty) {
-      final fallbackName = (json['artist_name'] ??
-              json['artist'] ??
-              json['artistName'] ??
-              json['author'] ??
-              json['authors'] ??
-              json['channel_name'] ??
-              json['uploader'] ??
-              json['creator'] ??
-              '')
-          .toString()
-          .trim();
-      if (fallbackName.isNotEmpty) {
+      final fallbackName =
+          (json['artist_name'] ??
+                  json['artist'] ??
+                  json['artistName'] ??
+                  json['author'] ??
+                  json['authors'] ??
+                  json['channel_name'] ??
+                  json['channel'] ??
+                  json['uploader'] ??
+                  json['creator'] ??
+                  json['by'] ??
+                  json['performer'] ??
+                  json['subtitle'] ??
+                  json['owner'] ??
+                  '')
+              .toString()
+              .trim();
+      if (fallbackName.isNotEmpty && fallbackName.toLowerCase() != 'null') {
         artistsList.add(fallbackName);
+      } else {
+        // Try parsing artist from title if format is "Artist - Title"
+        final rawTitle = (json['title'] ?? json['name'] ?? '')
+            .toString()
+            .trim();
+        if (rawTitle.contains(' - ')) {
+          final parts = rawTitle.split(' - ');
+          if (parts.length >= 2 && parts[0].trim().isNotEmpty) {
+            artistsList.add(parts[0].trim());
+          }
+        }
       }
     }
 
     // Filter out category labels incorrectly returned as artist names
-    const invalidCategoryLabels = {'song', 'canzone', 'single', 'ep', 'video', 'track'};
-    artistsList = artistsList.where((a) => !invalidCategoryLabels.contains(a.trim().toLowerCase())).toList();
+    const invalidCategoryLabels = {
+      'song',
+      'canzone',
+      'single',
+      'ep',
+      'video',
+      'track',
+    };
+    artistsList = artistsList
+        .where((a) => !invalidCategoryLabels.contains(a.trim().toLowerCase()))
+        .toList();
 
     if (artistsIdsList.isEmpty) {
       if (json['artists_ids'] != null && json['artists_ids'] is List) {
-        artistsIdsList = (json['artists_ids'] as List).map<String>((e) {
-          final s = e.toString().trim();
-          return RegExp(r'^\d+$').hasMatch(s) ? 'dz_$s' : s;
-        }).where((e) => e.isNotEmpty).toList();
+        artistsIdsList = (json['artists_ids'] as List)
+            .map<String>((e) {
+              final s = e.toString().trim();
+              return RegExp(r'^\d+$').hasMatch(s) ? 'dz_$s' : s;
+            })
+            .where((e) => e.isNotEmpty)
+            .toList();
       } else if (json['artist_ids'] != null && json['artist_ids'] is List) {
-        artistsIdsList = (json['artist_ids'] as List).map<String>((e) {
-          final s = e.toString().trim();
-          return RegExp(r'^\d+$').hasMatch(s) ? 'dz_$s' : s;
-        }).where((e) => e.isNotEmpty).toList();
-      } else if (json['artist_id'] != null && json['artist_id'].toString().trim().isNotEmpty) {
+        artistsIdsList = (json['artist_ids'] as List)
+            .map<String>((e) {
+              final s = e.toString().trim();
+              return RegExp(r'^\d+$').hasMatch(s) ? 'dz_$s' : s;
+            })
+            .where((e) => e.isNotEmpty)
+            .toList();
+      } else if (json['artist_id'] != null &&
+          json['artist_id'].toString().trim().isNotEmpty) {
         final aid = json['artist_id'].toString().trim();
         artistsIdsList = [RegExp(r'^\d+$').hasMatch(aid) ? 'dz_$aid' : aid];
-      } else if (json['channel_id'] != null && json['channel_id'].toString().trim().isNotEmpty) {
+      } else if (json['channel_id'] != null &&
+          json['channel_id'].toString().trim().isNotEmpty) {
         final cid = json['channel_id'].toString().trim();
         artistsIdsList = [RegExp(r'^\d+$').hasMatch(cid) ? 'dz_$cid' : cid];
       }
@@ -186,23 +257,25 @@ class Track {
     }
 
     // Determine cover URL
-    String? cUrl = (json['cover_url'] ??
-            json['cover_art'] ??
-            json['cover'] ??
-            json['album_art'] ??
-            json['albumArt'] ??
-            json['album_cover'])
-        ?.toString();
+    String? cUrl =
+        (json['cover_url'] ??
+                json['cover_art'] ??
+                json['cover'] ??
+                json['album_art'] ??
+                json['albumArt'] ??
+                json['album_cover'])
+            ?.toString();
 
     if ((cUrl == null || cUrl.isEmpty) && json['album'] is Map) {
       final alb = json['album'] as Map;
-      cUrl = (alb['cover_url'] ??
-              alb['cover_art'] ??
-              alb['cover_big'] ??
-              alb['cover_medium'] ??
-              alb['cover_xl'] ??
-              alb['cover'])
-          ?.toString();
+      cUrl =
+          (alb['cover_url'] ??
+                  alb['cover_art'] ??
+                  alb['cover_big'] ??
+                  alb['cover_medium'] ??
+                  alb['cover_xl'] ??
+                  alb['cover'])
+              ?.toString();
     }
 
     // Determine download status
@@ -218,8 +291,9 @@ class Track {
       album: json['album'] is String
           ? json['album']
           : (json['album'] is Map
-              ? json['album']['name']?.toString() ?? json['album']['title']?.toString()
-              : json['album_title']?.toString()),
+                ? json['album']['name']?.toString() ??
+                      json['album']['title']?.toString()
+                : json['album_title']?.toString()),
       albumId: albId,
       duration: trackDuration,
       downloadStatus: status,
@@ -230,6 +304,7 @@ class Track {
       isDownloaded: downloaded,
       lyricsText: json['lyrics_text']?.toString(),
       lyricsLrc: json['lyrics_lrc']?.toString(),
+      reason: json['reason']?.toString(),
     );
   }
 
@@ -272,6 +347,7 @@ class Track {
     bool? isDownloaded,
     String? lyricsText,
     String? lyricsLrc,
+    String? reason,
   }) {
     return Track(
       videoId: videoId ?? this.videoId,
@@ -290,6 +366,7 @@ class Track {
       isDownloaded: isDownloaded ?? this.isDownloaded,
       lyricsText: lyricsText ?? this.lyricsText,
       lyricsLrc: lyricsLrc ?? this.lyricsLrc,
+      reason: reason ?? this.reason,
     );
   }
 }
@@ -326,8 +403,8 @@ class Album {
     final yearLabel = year != null
         ? ' • $year'
         : (releaseDate != null && releaseDate!.isNotEmpty
-            ? ' • ${releaseDate!.split('-').first}'
-            : '');
+              ? ' • ${releaseDate!.split('-').first}'
+              : '');
     return '$typeLabel$yearLabel';
   }
 
@@ -399,11 +476,13 @@ class Album {
       name: (json['title'] ?? json['name'] ?? 'Unknown Album').toString(),
       artists: artistsList,
       year: parsedYear,
-      coverUrl: (json['cover_url'] ?? json['album_art'] ?? json['albumArt'])?.toString(),
+      coverUrl: (json['cover_url'] ?? json['album_art'] ?? json['albumArt'])
+          ?.toString(),
       trackCount: parsedTrackCount,
       downloadedCount: parsedDownloadedCount,
       tracks: tracksList,
-      albumType: (json['album_type'] ?? json['albumType'] ?? json['type'])?.toString(),
+      albumType: (json['album_type'] ?? json['albumType'] ?? json['type'])
+          ?.toString(),
       releaseDate: (json['release_date'] ?? json['releaseDate'])?.toString(),
     );
   }
@@ -437,7 +516,9 @@ class Artist {
   });
 
   factory Artist.fromJson(Map<String, dynamic> json) {
-    String artistId = (json['channel_id'] ?? json['id'] ?? '').toString().trim();
+    String artistId = (json['channel_id'] ?? json['id'] ?? '')
+        .toString()
+        .trim();
     if (artistId.isNotEmpty && RegExp(r'^\d+$').hasMatch(artistId)) {
       artistId = 'dz_$artistId';
     }
@@ -445,7 +526,7 @@ class Artist {
     List<Track>? top;
     final rawTop = json['top_songs'] ?? json['top'];
     if (rawTop != null && rawTop is List) {
-      top = (rawTop as List)
+      top = rawTop
           .map((e) => Track.fromJson(Map<String, dynamic>.from(e)))
           .toList();
     }
@@ -470,9 +551,22 @@ class Artist {
       description: json['description'],
       subscribers: json['subscribers']?.toString(),
       monthlyListeners: json['monthly_listeners']?.toString(),
-      fans: json['fans'] is int ? json['fans'] : int.tryParse(json['fans']?.toString() ?? ''),
-      albumCount: json['album_count'] is int ? json['album_count'] : int.tryParse(json['album_count']?.toString() ?? ''),
-      coverUrl: (json['cover_url'] ?? json['avatar_art'] ?? json['cover_path'])?.toString(),
+      fans: json['fans'] is int
+          ? json['fans']
+          : int.tryParse(json['fans']?.toString() ?? ''),
+      albumCount: json['album_count'] is int
+          ? json['album_count']
+          : int.tryParse(json['album_count']?.toString() ?? ''),
+      coverUrl:
+          (json['cover_url'] ??
+                  json['avatar_art'] ??
+                  json['cover_path'] ??
+                  json['picture_medium'] ??
+                  json['picture_big'] ??
+                  json['picture_xl'] ??
+                  json['picture'])
+              ?.toString() ??
+          (artistId.isNotEmpty ? '/api/artists/$artistId/cover' : null),
       topSongs: top,
       albums: albs,
       singles: sngls,
@@ -513,7 +607,9 @@ class Playlist {
 
   factory Playlist.fromJson(Map<String, dynamic> json) {
     String playlistId = (json['id'] ?? 0).toString().trim();
-    if (playlistId.isNotEmpty && RegExp(r'^\d+$').hasMatch(playlistId) && json['owner_name'] == 'Deezer') {
+    if (playlistId.isNotEmpty &&
+        RegExp(r'^\d+$').hasMatch(playlistId) &&
+        json['owner_name'] == 'Deezer') {
       playlistId = 'dz_$playlistId';
     }
 
@@ -544,7 +640,9 @@ class Playlist {
 
     return Playlist(
       id: playlistId,
-      userId: json['user_id'] is int ? json['user_id'] : int.tryParse(json['user_id']?.toString() ?? '') ?? 0,
+      userId: json['user_id'] is int
+          ? json['user_id']
+          : int.tryParse(json['user_id']?.toString() ?? '') ?? 0,
       name: (json['title'] ?? json['name'] ?? 'Unnamed Playlist').toString(),
       description: json['description']?.toString(),
       ownerName: json['owner_name']?.toString(),
@@ -575,7 +673,10 @@ class HistoryEntry {
     this.track,
   });
 
-  factory HistoryEntry.fromJson(Map<String, dynamic> json, {Track? enrichedTrack}) {
+  factory HistoryEntry.fromJson(
+    Map<String, dynamic> json, {
+    Track? enrichedTrack,
+  }) {
     DateTime parsedDate;
     try {
       parsedDate = DateTime.parse(json['listened_at'] ?? json['listenedAt']);
@@ -583,12 +684,18 @@ class HistoryEntry {
       parsedDate = DateTime.now();
     }
     final rawId = json['id'];
-    final idVal = rawId is int ? rawId : (rawId != null ? int.tryParse(rawId.toString()) ?? 0 : 0);
+    final idVal = rawId is int
+        ? rawId
+        : (rawId != null ? int.tryParse(rawId.toString()) ?? 0 : 0);
 
     final rawUserId = json['user_id'] ?? json['userId'];
-    final userIdVal = rawUserId is int ? rawUserId : (rawUserId != null ? int.tryParse(rawUserId.toString()) ?? 0 : 0);
+    final userIdVal = rawUserId is int
+        ? rawUserId
+        : (rawUserId != null ? int.tryParse(rawUserId.toString()) ?? 0 : 0);
 
-    final trackIdVal = (json['track_id'] ?? json['trackId'] ?? json['video_id'] ?? '').toString();
+    final trackIdVal =
+        (json['track_id'] ?? json['trackId'] ?? json['video_id'] ?? '')
+            .toString();
 
     Track? trackVal = enrichedTrack;
     if (trackVal == null) {
@@ -634,12 +741,16 @@ class ResolutionCandidate {
     return ResolutionCandidate(
       videoId: (json['video_id'] ?? json['videoId'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
-      artists: json['artists'] is List ? (json['artists'] as List).map((e) => e.toString()).toList() : [],
+      artists: json['artists'] is List
+          ? (json['artists'] as List).map((e) => e.toString()).toList()
+          : [],
       durationSeconds: json['duration_seconds'] ?? json['durationSeconds'] ?? 0,
       videoType: (json['video_type'] ?? json['videoType'] ?? 'ATV').toString(),
       thumbnail: json['thumbnail']?.toString(),
       matchScore: json['match_score'] ?? json['matchScore'] ?? 0,
-      matchReasons: json['match_reasons'] is List ? (json['match_reasons'] as List).map((e) => e.toString()).toList() : [],
+      matchReasons: json['match_reasons'] is List
+          ? (json['match_reasons'] as List).map((e) => e.toString()).toList()
+          : [],
     );
   }
 }
@@ -663,28 +774,57 @@ class ResolutionRequiredException implements Exception {
 
   factory ResolutionRequiredException.fromJson(Map<String, dynamic> json) {
     List<ResolutionCandidate> candList = [];
-    if (json['candidates'] is List) {
-      candList = (json['candidates'] as List)
-          .map((c) => ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)))
+    dynamic rawCandidates = json['candidates'];
+    if (rawCandidates == null && json['detail'] is Map) {
+      rawCandidates = json['detail']['candidates'];
+    }
+    if (rawCandidates == null && json['data'] is Map) {
+      rawCandidates = json['data']['candidates'];
+    }
+    if (rawCandidates is List) {
+      candList = rawCandidates
+          .map(
+            (c) => ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)),
+          )
           .toList();
     }
+
+    final rawDetail = json['detail'] is Map ? json['detail'] as Map : null;
+
     return ResolutionRequiredException(
-      resolutionId: json['resolution_id']?.toString(),
-      trackId: (json['track_id'] ?? json['trackId'] ?? '').toString(),
-      title: (json['title'] ?? '').toString(),
-      artists: json['artists'] is List ? (json['artists'] as List).map((e) => e.toString()).toList() : [],
-      durationSeconds: json['duration_seconds'] as int?,
+      resolutionId:
+          (json['resolution_id'] ??
+                  json['resolutionId'] ??
+                  rawDetail?['resolution_id'])
+              ?.toString(),
+      trackId:
+          (json['track_id'] ?? json['trackId'] ?? rawDetail?['track_id'] ?? '')
+              .toString(),
+      title: (json['title'] ?? rawDetail?['title'] ?? '').toString(),
+      artists: (json['artists'] ?? rawDetail?['artists']) is List
+          ? ((json['artists'] ?? rawDetail?['artists']) as List)
+                .map((e) => e.toString())
+                .toList()
+          : [],
+      durationSeconds:
+          (json['duration_seconds'] ??
+                  json['durationSeconds'] ??
+                  rawDetail?['duration_seconds'])
+              as int?,
       candidates: candList,
     );
   }
 
   @override
-  String toString() => 'ResolutionRequiredException: Selection required for $title';
+  String toString() =>
+      'ResolutionRequiredException: Selection required for $title';
 }
 
 class TrackUnavailableException implements Exception {
   final String message;
-  TrackUnavailableException([this.message = 'No safe YouTube Music match was found.']);
+  TrackUnavailableException([
+    this.message = 'No safe YouTube Music match was found.',
+  ]);
 
   @override
   String toString() => message;
@@ -692,7 +832,20 @@ class TrackUnavailableException implements Exception {
 
 class ProviderUnavailableException implements Exception {
   final String message;
-  ProviderUnavailableException([this.message = 'Music provider is temporarily down.']);
+  ProviderUnavailableException([
+    this.message = 'Music provider is temporarily down.',
+  ]);
+
+  @override
+  String toString() => message;
+}
+
+class RateLimitException implements Exception {
+  final String message;
+  RateLimitException([
+    this.message =
+        'Too many requests to stream provider (HTTP 429). Please wait a moment.',
+  ]);
 
   @override
   String toString() => message;
@@ -722,7 +875,9 @@ class AlbumDownloadSummary {
   factory AlbumDownloadSummary.fromJson(Map<String, dynamic> json) {
     return AlbumDownloadSummary(
       album: json['album']?.toString() ?? '',
-      artists: json['artists'] is List ? (json['artists'] as List).map((e) => e.toString()).toList() : [],
+      artists: json['artists'] is List
+          ? (json['artists'] as List).map((e) => e.toString()).toList()
+          : [],
       totalTracks: json['total_tracks'] ?? 0,
       queuedForDownload: json['queued_for_download'] ?? 0,
       alreadyDownloaded: json['already_downloaded'] ?? 0,
@@ -744,6 +899,9 @@ class ImportStatus {
   final int unavailable;
   final List<Map<String, dynamic>> failedTracks;
   final List<Map<String, dynamic>> reviewItems;
+  final String? statusUrl;
+  final String? importMode;
+  final String? playlistName;
   final DateTime createdAt;
 
   ImportStatus({
@@ -757,17 +915,24 @@ class ImportStatus {
     this.unavailable = 0,
     required this.failedTracks,
     this.reviewItems = const [],
+    this.statusUrl,
+    this.importMode,
+    this.playlistName,
     required this.createdAt,
   });
 
   factory ImportStatus.fromJson(Map<String, dynamic> json) {
     List<Map<String, dynamic>> fails = [];
     if (json['failed_tracks'] != null && json['failed_tracks'] is List) {
-      fails = (json['failed_tracks'] as List).map((e) => Map<String, dynamic>.from(e)).toList();
+      fails = (json['failed_tracks'] as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     }
     List<Map<String, dynamic>> reviews = [];
     if (json['review_items'] != null && json['review_items'] is List) {
-      reviews = (json['review_items'] as List).map((e) => Map<String, dynamic>.from(e)).toList();
+      reviews = (json['review_items'] as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     }
     return ImportStatus(
       jobId: json['job_id'] ?? '',
@@ -780,7 +945,110 @@ class ImportStatus {
       unavailable: json['unavailable'] ?? 0,
       failedTracks: fails,
       reviewItems: reviews,
-      createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : DateTime.now(),
+      statusUrl: json['status_url']?.toString(),
+      importMode: json['import_mode']?.toString(),
+      playlistName: json['playlist_name']?.toString(),
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
+          : DateTime.now(),
     );
   }
 }
+
+class PlaylistDownloadTrack {
+  final String trackId;
+  final String title;
+  final List<String> artists;
+  final String? album;
+  final int durationSeconds;
+  final String downloadStatus;
+  final String? coverUrl;
+  final String? streamUrl;
+  final String? downloadUrl;
+
+  PlaylistDownloadTrack({
+    required this.trackId,
+    required this.title,
+    required this.artists,
+    this.album,
+    required this.durationSeconds,
+    required this.downloadStatus,
+    this.coverUrl,
+    this.streamUrl,
+    this.downloadUrl,
+  });
+
+  factory PlaylistDownloadTrack.fromJson(Map<String, dynamic> json) {
+    return PlaylistDownloadTrack(
+      trackId: (json['track_id'] ?? json['trackId'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      artists: json['artists'] is List
+          ? (json['artists'] as List).map((e) => e.toString()).toList()
+          : [],
+      album: json['album']?.toString(),
+      durationSeconds: json['duration_seconds'] ?? json['durationSeconds'] ?? 0,
+      downloadStatus: (json['download_status'] ?? json['downloadStatus'] ?? 'discovered').toString(),
+      coverUrl: json['cover_url']?.toString(),
+      streamUrl: json['stream_url']?.toString(),
+      downloadUrl: json['download_url']?.toString(),
+    );
+  }
+}
+
+class PlaylistDownloadCounts {
+  final int ready;
+  final int queued;
+  final int needsResolution;
+  final int unavailable;
+  final int failed;
+
+  PlaylistDownloadCounts({
+    required this.ready,
+    required this.queued,
+    required this.needsResolution,
+    required this.unavailable,
+    required this.failed,
+  });
+
+  factory PlaylistDownloadCounts.fromJson(Map<String, dynamic> json) {
+    return PlaylistDownloadCounts(
+      ready: json['ready'] ?? 0,
+      queued: json['queued'] ?? 0,
+      needsResolution: json['needs_resolution'] ?? 0,
+      unavailable: json['unavailable'] ?? 0,
+      failed: json['failed'] ?? 0,
+    );
+  }
+}
+
+class PlaylistDownloadManifest {
+  final dynamic playlistId;
+  final String name;
+  final int trackCount;
+  final List<PlaylistDownloadTrack> tracks;
+  final PlaylistDownloadCounts counts;
+
+  PlaylistDownloadManifest({
+    required this.playlistId,
+    required this.name,
+    required this.trackCount,
+    required this.tracks,
+    required this.counts,
+  });
+
+  factory PlaylistDownloadManifest.fromJson(Map<String, dynamic> json) {
+    final rawTracks = json['tracks'] as List? ?? [];
+    return PlaylistDownloadManifest(
+      playlistId: json['playlist_id'] ?? json['id'],
+      name: (json['name'] ?? '').toString(),
+      trackCount: json['track_count'] ?? json['trackCount'] ?? rawTracks.length,
+      tracks: rawTracks
+          .map((t) => PlaylistDownloadTrack.fromJson(Map<String, dynamic>.from(t)))
+          .toList(),
+      counts: PlaylistDownloadCounts.fromJson(
+        Map<String, dynamic>.from(json['counts'] ?? {}),
+      ),
+    );
+  }
+}
+

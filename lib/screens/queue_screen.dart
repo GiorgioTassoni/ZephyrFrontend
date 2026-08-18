@@ -137,11 +137,19 @@ class QueueScreen extends ConsumerWidget {
   Widget _buildNowPlayingTile(BuildContext context, Track track) {
     return Container(
       decoration: BoxDecoration(
-        color: ZephyrColors.bgLight.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
+        color: ZephyrColors.primary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: ZephyrColors.bgLight.withValues(alpha: 0.3),
+          color: ZephyrColors.primary.withValues(alpha: 0.7),
+          width: 1.5,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: ZephyrColors.primary.withValues(alpha: 0.2),
+            blurRadius: 16,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
@@ -156,7 +164,7 @@ class QueueScreen extends ConsumerWidget {
             videoId: track.videoId,
             coverUrl: track.coverUrl,
             size: 44,
-            borderRadius: 4,
+            borderRadius: 6,
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -168,7 +176,7 @@ class QueueScreen extends ConsumerWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.bold,
                     fontSize: 14,
                     color: ZephyrColors.primary,
                   ),
@@ -213,7 +221,7 @@ class QueueScreen extends ConsumerWidget {
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: tracks.length,
-        onReorder: onReorder,
+        onReorderItem: onReorder,
         buildDefaultDragHandles: false, // Custom drag handle for premium control
         itemBuilder: (context, index) {
           final track = tracks[index];
@@ -263,101 +271,116 @@ class _QueueTrackTileState extends State<_QueueTrackTile> {
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
-      child: Container(
-        decoration: BoxDecoration(
-          color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.15) : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        margin: const EdgeInsets.only(bottom: 4),
-        child: Row(
-          children: [
-            // Drag handle or Index number
-            SizedBox(
-              width: 32,
-              child: Center(
-                child: _isHovered
-                    ? const Icon(
-                        Icons.drag_handle,
-                        color: ZephyrColors.textDim,
-                        size: 20,
-                      )
-                    : Text(
-                        '${widget.index + 1}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: ZephyrColors.textMuted,
-                        ),
-                      ),
+      child: Consumer(
+        builder: (context, ref, child) {
+          final playerState = ref.watch(playerProvider);
+          return InkWell(
+            onTap: () {
+              ref.read(playerProvider.notifier).playTrack(
+                    widget.track,
+                    playerState.queue,
+                    origin: 'queue',
+                  );
+            },
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              decoration: BoxDecoration(
+                color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.15) : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
               ),
-            ),
-            const SizedBox(width: 8),
-            CoverImage(
-              videoId: widget.track.videoId,
-              coverUrl: widget.track.coverUrl,
-              size: 40,
-              borderRadius: 4,
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.track.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w500,
-                      fontSize: 14,
-                      color: ZephyrColors.text,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  ArtistLinks(
-                    track: widget.track,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: ZephyrColors.textDim,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Actions (Delete button on hover)
-            SizedBox(
-              width: 80,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              margin: const EdgeInsets.only(bottom: 4),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  if (widget.track.duration != null)
-                    Text(
-                      _formatDuration(widget.track.duration!),
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: ZephyrColors.textDim,
-                      ),
+                  // Drag handle or Index number
+                  SizedBox(
+                    width: 32,
+                    child: Center(
+                      child: _isHovered
+                          ? const Icon(
+                              Icons.drag_handle,
+                              color: ZephyrColors.textDim,
+                              size: 20,
+                            )
+                          : Text(
+                              '${widget.index + 1}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: ZephyrColors.textMuted,
+                              ),
+                            ),
                     ),
-                  const SizedBox(width: 12),
-                  if (_isHovered)
-                    IconButton(
-                      icon: const Icon(
-                        Icons.delete_outline,
-                        color: ZephyrColors.error,
-                        size: 18,
-                      ),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      tooltip: 'Remove from Queue',
-                      onPressed: widget.onDelete,
-                    )
-                  else
-                    const SizedBox(width: 18),
+                  ),
+                  const SizedBox(width: 8),
+                  CoverImage(
+                    videoId: widget.track.videoId,
+                    coverUrl: widget.track.coverUrl,
+                    size: 40,
+                    borderRadius: 4,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.track.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                            color: ZephyrColors.text,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ArtistLinks(
+                          track: widget.track,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: ZephyrColors.textDim,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Actions (Delete button on hover)
+                  SizedBox(
+                    width: 80,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        if (widget.track.duration != null)
+                          Text(
+                            _formatDuration(widget.track.duration!),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: ZephyrColors.textDim,
+                            ),
+                          ),
+                        const SizedBox(width: 12),
+                        if (_isHovered)
+                          IconButton(
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: ZephyrColors.error,
+                              size: 18,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            tooltip: 'Remove from Queue',
+                            onPressed: widget.onDelete,
+                          )
+                        else
+                          const SizedBox(width: 18),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

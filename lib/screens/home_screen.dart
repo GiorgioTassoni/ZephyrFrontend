@@ -7,7 +7,6 @@ import '../providers/player_provider.dart';
 import '../models/models.dart';
 import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
-import '../widgets/track_tile.dart';
 import '../widgets/toast.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -42,16 +41,13 @@ class HomeScreen extends ConsumerWidget {
     }
     final historyTracks = uniqueHistory.values.map((e) => e.track!).toList();
 
-    return Scaffold(
-      backgroundColor: ZephyrColors.bgDark,
-      body: Stack(
-        children: [
-          // Fixed Spotify-style top ambient glow (stays at the top 350px of the viewport, matching Amber Zephyr branding)
+    final stackChildren = <Widget>[
+      // Fixed subtle top ambient glow (stays at the top 180px of the viewport)
           Positioned(
             top: 0,
             left: 0,
             right: 0,
-            height: 350,
+            height: 180,
             child: IgnorePointer(
               child: Container(
                 decoration: BoxDecoration(
@@ -59,78 +55,84 @@ class HomeScreen extends ConsumerWidget {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      ZephyrColors.primary.withValues(alpha: 0.18),
-                      ZephyrColors.primary.withValues(alpha: 0.04),
+                      ZephyrColors.primary.withValues(alpha: 0.06),
+                      ZephyrColors.primary.withValues(alpha: 0.01),
                       Colors.transparent,
                     ],
-                    stops: const [0.0, 0.4, 1.0],
+                    stops: const [0.0, 0.5, 1.0],
                   ),
                 ),
               ),
             ),
           ),
           
-          // Scrollable Content
+          // Scrollable Content (Padded with 110px at bottom for player clearance)
           Positioned.fill(
             child: RefreshIndicator(
               onRefresh: () => libraryNotifier.refreshLibrary(),
               color: ZephyrColors.primary,
-              backgroundColor: ZephyrColors.bgCard,
-              child: SingleChildScrollView(
+              child: Builder(
+                builder: (context) {
+                  final isMobile = MediaQuery.of(context).size.width < 700;
+                  return SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                padding: EdgeInsets.fromLTRB(
+                  isMobile ? 14 : 40,
+                  isMobile ? 16 : 24,
+                  isMobile ? 14 : 40,
+                  110,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Greeting Header
                     Text(
                       _getGreeting(),
-                      style: const TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
+                      style: TextStyle(
+                        fontSize: isMobile ? 24 : 32,
+                        fontWeight: FontWeight.w900,
                         color: ZephyrColors.text,
-                        letterSpacing: -0.5,
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
 
-                    // Recently Played Quick Grid (6 items)
+                    // Quick Shortcuts Grid (Favorites, VPS Songs, Playlists)
                     _buildQuickGrid(context, ref, libraryState, navNotifier),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 36),
 
-                    // Section: Continue Listening / Listening History
+                    // Section: Recently Played (First Viewport Focus)
                     if (historyTracks.isNotEmpty) ...[
                       const Text(
                         'Recently Played',
                         style: TextStyle(
-                          fontSize: 22,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: ZephyrColors.text,
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       ScrollableHorizontalList(
                         itemCount: historyTracks.length.clamp(0, 10),
-                        itemHeight: context.scale(190),
+                        itemHeight: context.scale(198),
                         itemBuilder: (context, index) {
                           final track = historyTracks[index];
                           return _buildHorizontalTrackCard(context, track, historyTracks, playerNotifier);
                         },
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 36),
                     ],
 
-                    // Section: Your Playlists
+                    // Section: Your Playlists (Below the fold)
                     if (libraryState.playlists.isNotEmpty) ...[
                       const Text(
                         'Your Playlists',
                         style: TextStyle(
-                          fontSize: 22,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                           color: ZephyrColors.text,
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       ScrollableHorizontalList(
                         itemCount: libraryState.playlists.length,
                         itemHeight: context.scale(200),
@@ -142,10 +144,17 @@ class HomeScreen extends ConsumerWidget {
                     ],
                   ],
                 ),
-              ),
-            ),
+              );
+            },
           ),
-        ],
+        ),
+      ),
+    ];
+
+    return Scaffold(
+      backgroundColor: ZephyrColors.bgDark,
+      body: Stack(
+        children: stackChildren,
       ),
     );
   }
@@ -166,9 +175,10 @@ class HomeScreen extends ConsumerWidget {
     items.add(
       _QuickCard(
         title: 'Favorites',
+        subtitle: '${state.favorites.length} ${state.favorites.length == 1 ? 'song' : 'songs'}',
         iconWidget: Container(
           color: ZephyrColors.primary.withValues(alpha: 0.2),
-          child: const Icon(Icons.favorite, color: ZephyrColors.primary, size: 28),
+          child: const Icon(Icons.favorite, color: ZephyrColors.primary, size: 24),
         ),
         onTap: () {
           navNotifier.navigateTo(const ScreenState(type: ScreenType.favorites));
@@ -181,9 +191,10 @@ class HomeScreen extends ConsumerWidget {
       items.add(
         _QuickCard(
           title: 'VPS Songs',
+          subtitle: '${state.downloadedTracks.length} ${state.downloadedTracks.length == 1 ? 'track' : 'tracks'}',
           iconWidget: Container(
-            color: Colors.blue.withValues(alpha: 0.2),
-            child: const Icon(Icons.library_music, color: Colors.blue, size: 28),
+            color: ZephyrColors.primary.withValues(alpha: 0.15),
+            child: const Icon(Icons.cloud_done_rounded, color: ZephyrColors.primary, size: 24),
           ),
           onTap: () {
             navNotifier.navigateTo(const ScreenState(type: ScreenType.library, intId: 2));
@@ -192,12 +203,13 @@ class HomeScreen extends ConsumerWidget {
       );
     }
 
-    // Playlists
-    for (int i = 0; i < state.playlists.length && items.length < 6; i++) {
+    // Playlists (fill remaining slots up to 3 total cards)
+    for (int i = 0; i < state.playlists.length && items.length < 3; i++) {
       final pl = state.playlists[i];
       items.add(
         _QuickCard(
           title: pl.name,
+          subtitle: '${pl.trackCount ?? 0} ${pl.trackCount == 1 ? 'track' : 'tracks'}',
           iconWidget: CoverImage(playlistId: pl.id, size: 56, borderRadius: 0),
           onTap: () {
             navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, intId: pl.id));
@@ -208,13 +220,12 @@ class HomeScreen extends ConsumerWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Compute columns based on screen width
-        final crossAxisCount = constraints.maxWidth > 800 ? 3 : 2;
+        final crossAxisCount = constraints.maxWidth > 700 ? 3 : 2;
         return GridView.count(
           crossAxisCount: crossAxisCount,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: constraints.maxWidth > 800 ? 5.5 : 4.0,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: crossAxisCount == 2 ? 2.9 : (constraints.maxWidth > 800 ? 4.6 : 3.4),
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           children: items,
@@ -249,11 +260,13 @@ class HomeScreen extends ConsumerWidget {
 
 class _QuickCard extends StatefulWidget {
   final String title;
+  final String? subtitle;
   final Widget iconWidget;
   final VoidCallback onTap;
 
   const _QuickCard({
     required this.title,
+    this.subtitle,
     required this.iconWidget,
     required this.onTap,
   });
@@ -272,17 +285,12 @@ class _QuickCardState extends State<_QuickCard> {
       onExit: (_) => setState(() => _isHovered = false),
       child: InkWell(
         onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(8),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           decoration: BoxDecoration(
-            color: _isHovered ? ZephyrColors.bgLight : ZephyrColors.bgCard,
+            color: _isHovered ? ZephyrColors.bgLight : const Color(0xFF282828),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: _isHovered
-                  ? ZephyrColors.primary.withValues(alpha: 0.5)
-                  : ZephyrColors.bgLight.withValues(alpha: 0.4),
-            ),
           ),
           clipBehavior: Clip.antiAlias,
           child: Row(
@@ -292,27 +300,42 @@ class _QuickCardState extends State<_QuickCard> {
                 aspectRatio: 1.0,
                 child: widget.iconWidget,
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    widget.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: ZephyrColors.text,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13.5,
+                        color: ZephyrColors.text,
+                      ),
                     ),
-                  ),
+                    if (widget.subtitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.subtitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: ZephyrColors.textDim,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               AnimatedOpacity(
                 duration: const Duration(milliseconds: 150),
                 opacity: _isHovered ? 1.0 : 0.0,
                 child: Padding(
-                  padding: const EdgeInsets.only(right: 16.0),
+                  padding: const EdgeInsets.only(right: 14.0),
                   child: Center(
                     child: Container(
                       padding: const EdgeInsets.all(8),
@@ -323,7 +346,7 @@ class _QuickCardState extends State<_QuickCard> {
                       child: const Icon(
                         Icons.play_arrow,
                         color: Colors.black,
-                        size: 20,
+                        size: 18,
                       ),
                     ),
                   ),
@@ -368,18 +391,19 @@ class _HorizontalTrackCardState extends ConsumerState<_HorizontalTrackCard> {
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
           decoration: BoxDecoration(
-            color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.3) : ZephyrColors.bgCard,
-            borderRadius: BorderRadius.circular(8),
+            color: ZephyrColors.bgCard,
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: _isHovered
-                  ? ZephyrColors.primary.withValues(alpha: 0.5)
+                  ? ZephyrColors.primary.withValues(alpha: 0.7)
                   : ZephyrColors.bgLight.withValues(alpha: 0.3),
+              width: _isHovered ? 1.5 : 1.0,
             ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.15),
                 blurRadius: 4,
-                offset: const Offset(0, 2),
+                offset: const Offset(0, 3),
               ),
             ],
           ),
@@ -439,7 +463,7 @@ class _HorizontalTrackCardState extends ConsumerState<_HorizontalTrackCard> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                       fontSize: 13,
                       color: ZephyrColors.text,
                     ),
@@ -464,7 +488,7 @@ class _HorizontalTrackCardState extends ConsumerState<_HorizontalTrackCard> {
   );
 }
 
-  void _showRightClickMenu(BuildContext context, Offset position) {
+  Future<void> _showRightClickMenu(BuildContext context, Offset position) async {
     final playerNotifier = widget.playerNotifier;
 
     final RelativeRect positionRect = RelativeRect.fromRect(
@@ -472,7 +496,7 @@ class _HorizontalTrackCardState extends ConsumerState<_HorizontalTrackCard> {
       Offset.zero & MediaQuery.of(context).size,
     );
 
-    showMenu<String>(
+    final value = await showMenu<String>(
       context: context,
       position: positionRect,
       color: ZephyrColors.bgCard,
@@ -486,7 +510,7 @@ class _HorizontalTrackCardState extends ConsumerState<_HorizontalTrackCard> {
                 size: 20,
                 color: ZephyrColors.textDim,
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: 8),
               Text(
                 'Add to Queue',
                 style: TextStyle(color: ZephyrColors.text),
@@ -495,17 +519,16 @@ class _HorizontalTrackCardState extends ConsumerState<_HorizontalTrackCard> {
           ),
         ),
       ],
-    ).then((value) {
-      if (value == null) return;
-      
-      if (value == 'queue_action') {
-        playerNotifier.addToQueue(widget.track);
-        ZephyrToast.show(
-          context,
-          'Added "${widget.track.title}" to queue!',
-        );
-      }
-    });
+    );
+    if (value == null || !context.mounted) return;
+
+    if (value == 'queue_action') {
+      playerNotifier.addToQueue(widget.track);
+      ZephyrToast.show(
+        context,
+        'Added "${widget.track.title}" to queue!',
+      );
+    }
   }
 }
 
@@ -538,18 +561,19 @@ class _HorizontalPlaylistCardState extends State<_HorizontalPlaylistCard> {
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
           decoration: BoxDecoration(
-            color: _isHovered ? ZephyrColors.bgLight.withValues(alpha: 0.3) : ZephyrColors.bgCard,
-            borderRadius: BorderRadius.circular(8),
+            color: ZephyrColors.bgCard,
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: _isHovered
-                  ? ZephyrColors.primary.withValues(alpha: 0.5)
+                  ? ZephyrColors.primary.withValues(alpha: 0.7)
                   : ZephyrColors.bgLight.withValues(alpha: 0.3),
+              width: _isHovered ? 1.5 : 1.0,
             ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.15),
                 blurRadius: 4,
-                offset: const Offset(0, 2),
+                offset: const Offset(0, 3),
               ),
             ],
           ),
@@ -604,7 +628,7 @@ class _HorizontalPlaylistCardState extends State<_HorizontalPlaylistCard> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w500,
                       fontSize: 13,
                       color: ZephyrColors.text,
                     ),
@@ -712,13 +736,35 @@ class _ScrollableHorizontalListState extends State<ScrollableHorizontalList> {
               controller: _scrollController,
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.only(right: 32),
               itemCount: widget.itemCount,
               itemBuilder: widget.itemBuilder,
             ),
           ),
-          
-          // Left Arrow
-          if (_showLeftArrow)
+
+          // Right Edge Subtle Overflow Fade Hint
+          if (_showRightArrow)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: 48,
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        ZephyrColors.bgDark.withValues(alpha: 0.0),
+                        ZephyrColors.bgDark.withValues(alpha: 0.85),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (_showLeftArrow && _isHovered)
             Positioned(
               left: -12,
               top: 0,
@@ -755,7 +801,7 @@ class _ScrollableHorizontalListState extends State<ScrollableHorizontalList> {
             ),
 
           // Right Arrow
-          if (_showRightArrow)
+          if (_showRightArrow && _isHovered)
             Positioned(
               right: -12,
               top: 0,

@@ -291,6 +291,7 @@ class _ResolutionCandidateModalState
         );
       }
 
+      ZephyrApi().clearProxyStreamError(widget.exception.trackId);
       if (mounted) {
         Navigator.of(context).pop(true);
       }

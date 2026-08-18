@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
+import '../providers/auth_provider.dart';
+import '../providers/library_provider.dart';
 import '../providers/navigation_provider.dart';
 import '../providers/search_provider.dart';
 import '../theme/colors.dart';
 import '../theme/zephyr_theme.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/track_tile.dart';
+import '../widgets/toast.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -601,21 +604,59 @@ class _SearchArtistCardState extends State<_SearchArtistCard> {
   }
 }
 
-class _SearchPlaylistCard extends StatefulWidget {
+class _SearchPlaylistCard extends ConsumerStatefulWidget {
   final Playlist playlist;
   final VoidCallback onTap;
 
   const _SearchPlaylistCard({required this.playlist, required this.onTap});
 
   @override
-  State<_SearchPlaylistCard> createState() => _SearchPlaylistCardState();
+  ConsumerState<_SearchPlaylistCard> createState() => _SearchPlaylistCardState();
 }
 
-class _SearchPlaylistCardState extends State<_SearchPlaylistCard> {
+class _SearchPlaylistCardState extends ConsumerState<_SearchPlaylistCard> {
   bool _isHovered = false;
+  late bool _isSaved;
+
+  @override
+  void initState() {
+    super.initState();
+    _isSaved = widget.playlist.isSaved;
+  }
+
+  @override
+  void didUpdateWidget(_SearchPlaylistCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.playlist.isSaved != widget.playlist.isSaved) {
+      _isSaved = widget.playlist.isSaved;
+    }
+  }
+
+  Future<void> _toggleSave() async {
+    final libNotifier = ref.read(libraryProvider.notifier);
+    try {
+      if (_isSaved) {
+        await libNotifier.unsavePlaylist(widget.playlist.id);
+        setState(() => _isSaved = false);
+        if (mounted) ZephyrToast.show(context, 'Playlist removed from your library');
+      } else {
+        await libNotifier.savePlaylist(widget.playlist.id);
+        setState(() => _isSaved = true);
+        if (mounted) ZephyrToast.show(context, 'Playlist saved to your library');
+      }
+    } catch (e) {
+      if (mounted) ZephyrToast.show(context, 'Failed: $e', isError: true);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final authState = ref.watch(authProvider);
+    final currentUsername = authState.username;
+    final bool isOwner = widget.playlist.isOwner &&
+        (currentUsername == null || widget.playlist.ownerName == null || widget.playlist.ownerName!.isEmpty || widget.playlist.ownerName == currentUsername);
+    final bool isLocalZephyrPlaylist = !widget.playlist.id.toString().startsWith('dz_');
+
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
@@ -663,7 +704,9 @@ class _SearchPlaylistCardState extends State<_SearchPlaylistCard> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        widget.playlist.ownerName ?? 'Deezer',
+                        !isOwner && widget.playlist.ownerName != null && widget.playlist.ownerName!.isNotEmpty
+                            ? 'by ${widget.playlist.ownerName}'
+                            : (widget.playlist.ownerName ?? 'Deezer'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12, color: ZephyrColors.textDim),
@@ -671,6 +714,17 @@ class _SearchPlaylistCardState extends State<_SearchPlaylistCard> {
                     ],
                   ),
                 ),
+                if (isLocalZephyrPlaylist && !isOwner) ...[
+                  IconButton(
+                    icon: Icon(
+                      _isSaved ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                      size: 20,
+                      color: _isSaved ? ZephyrColors.primary : ZephyrColors.textDim,
+                    ),
+                    onPressed: _toggleSave,
+                    tooltip: _isSaved ? 'Remove from Library' : 'Save to Library',
+                  ),
+                ],
               ],
             ),
           ),

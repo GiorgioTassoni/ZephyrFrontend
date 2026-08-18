@@ -127,11 +127,17 @@ class _PlaylistCardState extends State<PlaylistCard> {
                       color: ZephyrColors.textMuted,
                     ),
                     const SizedBox(width: 4),
-                    const Text(
-                      'Playlist',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: ZephyrColors.textMuted,
+                    Expanded(
+                      child: Text(
+                        !widget.playlist.isOwner && widget.playlist.ownerName != null && widget.playlist.ownerName!.isNotEmpty
+                            ? 'by ${widget.playlist.ownerName}'
+                            : 'Playlist',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: ZephyrColors.textMuted,
+                        ),
                       ),
                     ),
                   ],

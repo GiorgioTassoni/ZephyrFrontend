@@ -334,6 +334,36 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
   }
 
+  Future<void> savePlaylist(dynamic id) async {
+    try {
+      final pId = (id is int) ? id : (int.tryParse(id.toString()) ?? 0);
+      if (pId <= 0) return;
+      await _api.savePlaylist(pId);
+      await loadLibrary();
+    } catch (e) {
+      state = state.copyWith(errorMessage: 'Failed to save playlist: $e');
+    }
+  }
+
+  Future<void> unsavePlaylist(dynamic id) async {
+    try {
+      final pId = (id is int) ? id : (int.tryParse(id.toString()) ?? 0);
+      if (pId <= 0) return;
+      await _api.unsavePlaylist(pId);
+      await loadLibrary();
+    } catch (e) {
+      state = state.copyWith(errorMessage: 'Failed to unsave playlist: $e');
+    }
+  }
+
+  Future<void> toggleSavePlaylist(Playlist playlist) async {
+    if (playlist.isSaved) {
+      await unsavePlaylist(playlist.id);
+    } else {
+      await savePlaylist(playlist.id);
+    }
+  }
+
   Future<void> uploadPlaylistCover(dynamic id, File imageFile) async {
     try {
       await _api.uploadPlaylistCover(id, imageFile);

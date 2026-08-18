@@ -931,6 +931,22 @@ class ZephyrApi {
     }
   }
 
+  Future<void> savePlaylist(int playlistId) async {
+    try {
+      await _dio.post('/api/playlists/$playlistId/save');
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<void> unsavePlaylist(int playlistId) async {
+    try {
+      await _dio.delete('/api/playlists/$playlistId/save');
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
   Future<String> uploadPlaylistCover(dynamic id, File imageFile) async {
     try {
       final formData = FormData.fromMap({

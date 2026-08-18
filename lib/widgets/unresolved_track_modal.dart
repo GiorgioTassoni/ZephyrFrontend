@@ -158,6 +158,7 @@ class _UnresolvedTrackModalState extends ConsumerState<UnresolvedTrackModal> {
         videoId: candidate.videoId,
       );
 
+      _api.clearProxyStreamError(widget.trackId);
       ref.read(playerProvider.notifier).clearResolvedCache(widget.trackId);
       if (mounted) {
         ZephyrToast.show(context, '⚡ Selection saved for "${candidate.title}"!');

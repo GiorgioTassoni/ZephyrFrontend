@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
+import '../providers/auth_provider.dart';
 import '../providers/library_provider.dart';
 import '../providers/navigation_provider.dart';
 import '../providers/offline_provider.dart';
@@ -59,13 +60,24 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
   void _playAllTracks() {
     if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
-    ref.read(playerProvider.notifier).playTrack(_playlist!.tracks!.first, _playlist!.tracks!);
+    final tracks = _playlist!.tracks!;
+    ref.read(playerProvider.notifier).playTrack(
+      tracks.first,
+      tracks,
+      isNewQueue: true,
+      origin: 'context',
+    );
   }
 
   void _shufflePlayAllTracks() {
     if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
     final list = List<Track>.from(_playlist!.tracks!)..shuffle();
-    ref.read(playerProvider.notifier).playTrack(list.first, list);
+    ref.read(playerProvider.notifier).playTrack(
+      list.first,
+      list,
+      isNewQueue: true,
+      origin: 'context',
+    );
   }
 
   bool _isDownloadingPlaylist = false;
@@ -99,34 +111,32 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         type: FileType.image,
         allowMultiple: false,
       );
-
       if (result != null && result.files.single.path != null) {
         final file = File(result.files.single.path!);
-        setState(() {
-          _isLoading = true;
-        });
         await ref.read(libraryProvider.notifier).uploadPlaylistCover(_playlist!.id, file);
         await _fetchPlaylistDetails();
+        if (mounted) {
+          ZephyrToast.show(context, 'Cover updated successfully');
+        }
       }
     } catch (e) {
-      if (mounted) ZephyrToast.show(context, 'Failed to upload cover: $e', isError: true);
-      if (mounted) setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        ZephyrToast.show(context, 'Failed to upload cover: $e', isError: true);
+      }
     }
   }
 
   void _showEditDetailsDialog() {
     if (_playlist == null || _playlist!.id.toString().startsWith('dz_')) return;
     final nameController = TextEditingController(text: _playlist!.name);
-    final descController = TextEditingController(text: _playlist!.description);
+    final descController = TextEditingController(text: _playlist!.description ?? '');
     bool isPublic = _playlist!.isPublic;
 
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
-          builder: (context, setState) {
+          builder: (context, setDialogState) {
             return AlertDialog(
               backgroundColor: ZephyrColors.bgCard,
               title: const Text('Edit Playlist Details'),
@@ -135,34 +145,28 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                 children: [
                   TextField(
                     controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Name'),
+                    decoration: const InputDecoration(labelText: 'Playlist Name'),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: descController,
                     decoration: const InputDecoration(labelText: 'Description'),
                   ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: isPublic,
-                        activeColor: ZephyrColors.primary,
-                        onChanged: (val) {
-                          setState(() {
-                            isPublic = val ?? false;
-                          });
-                        },
-                      ),
-                      const Text('Public Visibility'),
-                    ],
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    title: const Text('Public Playlist'),
+                    subtitle: const Text('Allow other users on this server to see and play'),
+                    value: isPublic,
+                    activeColor: ZephyrColors.primary,
+                    contentPadding: EdgeInsets.zero,
+                    onChanged: (val) => setDialogState(() => isPublic = val),
                   ),
                 ],
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel', style: TextStyle(color: ZephyrColors.textDim)),
+                  child: const Text('Cancel'),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: ZephyrColors.primary),
@@ -184,6 +188,28 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
         );
       },
     );
+  }
+
+  Future<void> _toggleSavePlaylist() async {
+    if (_playlist == null || _playlist!.id.toString().startsWith('dz_')) return;
+    final isSaved = _playlist!.isSaved;
+    try {
+      if (isSaved) {
+        await ref.read(libraryProvider.notifier).unsavePlaylist(_playlist!.id);
+        setState(() {
+          _playlist = _playlist!.copyWith(isSaved: false);
+        });
+        if (mounted) ZephyrToast.show(context, 'Playlist removed from your library');
+      } else {
+        await ref.read(libraryProvider.notifier).savePlaylist(_playlist!.id);
+        setState(() {
+          _playlist = _playlist!.copyWith(isSaved: true);
+        });
+        if (mounted) ZephyrToast.show(context, 'Playlist saved to your library');
+      }
+    } catch (e) {
+      if (mounted) ZephyrToast.show(context, 'Failed: $e', isError: true);
+    }
   }
 
   void _deletePlaylist() {
@@ -214,9 +240,9 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   }
 
   Future<void> _removeTrack(String trackId) async {
-    if (_playlist == null || _playlist!.id.toString().startsWith('dz_')) return;
+    if (_playlist == null) return;
     try {
-      await ref.read(libraryProvider.notifier).removeTrackFromPlaylist(_playlist!.id, trackId);
+      await _api.removeTrackFromPlaylist(_playlist!.id, trackId);
       await _fetchPlaylistDetails();
       if (mounted) ZephyrToast.show(context, 'Song removed from playlist');
     } catch (e) {
@@ -250,6 +276,11 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     if (_playlist == null) {
       return const Center(child: Text('Playlist not found'));
     }
+
+    final authState = ref.watch(authProvider);
+    final currentUsername = authState.username;
+    final bool isPlaylistOwner = _playlist!.isOwner &&
+        (currentUsername == null || _playlist!.ownerName == null || _playlist!.ownerName!.isEmpty || _playlist!.ownerName == currentUsername);
 
     final tracks = _playlist!.tracks ?? [];
     final isRemote = _playlist!.id.toString().startsWith('dz_');
@@ -391,6 +422,30 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                 tooltip: 'Shuffle Play',
                               ),
                               if (!isRemote) ...[
+                                if (!isPlaylistOwner) ...[
+                                  const SizedBox(width: 12),
+                                  IconButton(
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: _playlist!.isSaved
+                                          ? ZephyrColors.primary.withValues(alpha: 0.15)
+                                          : ZephyrColors.bgLight,
+                                      foregroundColor: _playlist!.isSaved
+                                          ? ZephyrColors.primary
+                                          : ZephyrColors.textDim,
+                                      padding: const EdgeInsets.all(10),
+                                    ),
+                                    icon: Icon(
+                                      _playlist!.isSaved
+                                          ? Icons.bookmark_added_rounded
+                                          : Icons.bookmark_add_outlined,
+                                      size: 20,
+                                    ),
+                                    onPressed: _toggleSavePlaylist,
+                                    tooltip: _playlist!.isSaved
+                                        ? 'Remove from Your Library'
+                                        : 'Save to Your Library',
+                                  ),
+                                ],
                                 const SizedBox(width: 12),
                                 IconButton(
                                   style: IconButton.styleFrom(
@@ -535,6 +590,30 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                       tooltip: 'Shuffle Play',
                                     ),
                                     if (!isRemote) ...[
+                                      if (!isPlaylistOwner) ...[
+                                        const SizedBox(width: 12),
+                                        IconButton(
+                                          style: IconButton.styleFrom(
+                                            backgroundColor: _playlist!.isSaved
+                                                ? ZephyrColors.primary.withValues(alpha: 0.15)
+                                                : ZephyrColors.bgLight,
+                                            foregroundColor: _playlist!.isSaved
+                                                ? ZephyrColors.primary
+                                                : ZephyrColors.textDim,
+                                            padding: const EdgeInsets.all(10),
+                                          ),
+                                          icon: Icon(
+                                            _playlist!.isSaved
+                                                ? Icons.bookmark_added_rounded
+                                                : Icons.bookmark_add_outlined,
+                                            size: 20,
+                                          ),
+                                          onPressed: _toggleSavePlaylist,
+                                          tooltip: _playlist!.isSaved
+                                              ? 'Remove from Your Library'
+                                              : 'Save to Your Library',
+                                        ),
+                                      ],
                                       const SizedBox(width: 12),
                                       IconButton(
                                         style: IconButton.styleFrom(
@@ -571,45 +650,71 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                             _showEditDetailsDialog();
                                           } else if (val == 'delete') {
                                             _deletePlaylist();
+                                          } else if (val == 'toggle_save') {
+                                            _toggleSavePlaylist();
                                           } else if (val == 'reorder') {
                                             setState(() => _isReorderingMode = !_isReorderingMode);
                                           }
                                         },
                                         itemBuilder: (context) => [
-                                          const PopupMenuItem(
-                                            value: 'edit',
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.edit_outlined, size: 20, color: ZephyrColors.textDim),
-                                                SizedBox(width: 8),
-                                                Text('Edit Details'),
-                                              ],
+                                          if (isPlaylistOwner) ...[
+                                            const PopupMenuItem(
+                                              value: 'edit',
+                                              child: Row(
+                                                children: [
+                                                  Icon(Icons.edit_outlined, size: 20, color: ZephyrColors.textDim),
+                                                  SizedBox(width: 8),
+                                                  Text('Edit Details'),
+                                                ],
+                                              ),
                                             ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: 'reorder',
-                                            child: Row(
-                                              children: [
-                                                Icon(
-                                                  _isReorderingMode ? Icons.check : Icons.reorder_rounded,
-                                                  size: 20,
-                                                  color: ZephyrColors.textDim,
-                                                ),
-                                                SizedBox(width: 8),
-                                                Text(_isReorderingMode ? 'Done Reordering' : 'Reorder Tracks'),
-                                              ],
+                                            PopupMenuItem(
+                                              value: 'reorder',
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    _isReorderingMode ? Icons.check : Icons.reorder_rounded,
+                                                    size: 20,
+                                                    color: ZephyrColors.textDim,
+                                                  ),
+                                                  SizedBox(width: 8),
+                                                  Text(_isReorderingMode ? 'Done Reordering' : 'Reorder Tracks'),
+                                                ],
+                                              ),
                                             ),
-                                          ),
-                                          const PopupMenuItem(
-                                            value: 'delete',
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.delete_outline_rounded, size: 20, color: ZephyrColors.error),
-                                                SizedBox(width: 8),
-                                                Text('Delete Playlist', style: TextStyle(color: ZephyrColors.error)),
-                                              ],
+                                            const PopupMenuItem(
+                                              value: 'delete',
+                                              child: Row(
+                                                children: [
+                                                  Icon(Icons.delete_outline_rounded, size: 20, color: ZephyrColors.error),
+                                                  SizedBox(width: 8),
+                                                  Text('Delete Playlist', style: TextStyle(color: ZephyrColors.error)),
+                                                ],
+                                              ),
                                             ),
-                                          ),
+                                          ] else ...[
+                                            PopupMenuItem(
+                                              value: 'toggle_save',
+                                              child: Row(
+                                                children: [
+                                                  Icon(
+                                                    _playlist!.isSaved
+                                                        ? Icons.bookmark_remove_outlined
+                                                        : Icons.bookmark_add_outlined,
+                                                    size: 20,
+                                                    color: _playlist!.isSaved ? ZephyrColors.error : ZephyrColors.textDim,
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Text(
+                                                    _playlist!.isSaved ? 'Remove from Library' : 'Save to Library',
+                                                    style: TextStyle(
+                                                      color: _playlist!.isSaved ? ZephyrColors.error : ZephyrColors.text,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
                                         ],
                                       ),
                                     ],

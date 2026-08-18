@@ -735,8 +735,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     // while the backend still has a live owner session.
     final bool isPlayer =
         state.myDeviceId.isNotEmpty &&
-        activeId != null &&
-        activeId == state.myDeviceId;
+        (activeId == state.myDeviceId || (activeId == null && state.isPlayerDevice));
     if (!isInitial && activeId == null) {
       _ownershipReleased = true;
       _cancelOwnershipRecovery();
@@ -1025,6 +1024,14 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           isDownloaded: false,
         );
 
+        // If this device is the local playback OWNER and is actively playing or
+        // loading a locally initiated track, do not let a delayed/stale server
+        // broadcast snap back to the previous track.
+        if (state.isPlayerDevice &&
+            (state.isLoading || state.isPlaying || _hasLocalAudioSource)) {
+          return;
+        }
+
         // The takeover response and its SSE broadcast describe the same
         // playback intent. If takeoverPlayback already owns startup for this
         // track, let that single request finish instead of opening another
@@ -1091,6 +1098,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         !isInitial &&
         !suppressPersistedStartupPlayback &&
         serverPlaying &&
+        !_localPlaybackSuppressed &&
+        state.isPlaying &&
         (serverPlayChanged || !_hasLocalAudioSource);
     if (!suppressOwnerPlayback && (serverPauseChanged || shouldHandlePlay)) {
       _lastKnownServerPlaying = serverPlaying;
@@ -1531,6 +1540,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     }, onError: (_) {});
 
     _completeSub = _audioPlayer.onPlayerComplete.listen((_) {
+      if (!state.isPlaying || _localPlaybackSuppressed) return;
       _handlePlaybackComplete();
     }, onError: (_) {});
 
@@ -1640,7 +1650,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       isPlaying: false,
       currentTrack: track,
       queue: queueToSet,
-      originalQueue: state.isShuffled ? state.originalQueue : queueToSet,
+      originalQueue: (isNewQueue || !state.isShuffled) ? playQueue : state.originalQueue,
       currentIndex: 0,
       position: initialPosition ?? Duration.zero,
       duration: initialDur,
@@ -2113,14 +2123,15 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     if (state.currentTrack != null) {
       _suppressPersistedStartupPlayback = false;
       _localPlaybackSuppressed = false;
+      final currentPos = state.position;
       state = state.copyWith(isPlaying: true);
       if (_isInitialLoad) {
         _isInitialLoad = false;
-        final resumePos = state.position;
-        await playTrack(state.currentTrack!, state.queue);
-        if (resumePos > Duration.zero) {
-          await seek(resumePos);
-        }
+        await playTrack(
+          state.currentTrack!,
+          state.queue,
+          initialPosition: currentPos,
+        );
       } else {
         try {
           await zephyrAudioHandler?.play();
@@ -2130,21 +2141,27 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         } catch (_) {
           // Only retry stream startup when the device is still the OWNER.
           if (state.isPlayerDevice) {
-            await playTrack(state.currentTrack!, state.queue);
+            await playTrack(
+              state.currentTrack!,
+              state.queue,
+              initialPosition: currentPos,
+            );
           }
         }
       }
-      LinuxMprisService().updateState(
-        isPlaying: true,
-        track: state.currentTrack,
-        apiBaseUrl: _api.baseUrl,
-      );
+      try {
+        LinuxMprisService().updateState(
+          isPlaying: true,
+          track: state.currentTrack,
+          apiBaseUrl: _api.baseUrl,
+        );
+      } catch (_) {}
       _api
           .updatePlayerState(
             deviceId: state.isPlayerDevice ? state.myDeviceId : null,
             deviceName: state.isPlayerDevice ? state.myDeviceName : null,
             isPlaying: true,
-            positionMs: state.position.inMilliseconds,
+            positionMs: currentPos.inMilliseconds,
           )
           .catchError((_) => <String, dynamic>{});
     }
@@ -2232,10 +2249,26 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   }
 
   Future<void> seek(Duration position) async {
+    state = state.copyWith(position: position);
+
+    if (!state.isPlayerDevice &&
+        (state.activeDeviceId == null || state.activeDeviceId!.isEmpty)) {
+      await _claimLocalPlaybackIfUnowned();
+    }
+
     if (!state.isPlayerDevice) {
       await sendRemoteCommand('seek', positionMs: position.inMilliseconds);
       return;
     }
+
+    try {
+      LinuxMprisService().updateState(
+        isPlaying: state.isPlaying,
+        track: state.currentTrack,
+        apiBaseUrl: _api.baseUrl,
+      );
+    } catch (_) {}
+
     try {
       if (zephyrAudioHandler != null) {
         await zephyrAudioHandler!.seek(position);
@@ -2246,6 +2279,15 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     try {
       await _audioPlayer.seek(position).timeout(const Duration(seconds: 1));
     } catch (_) {}
+
+    _api
+        .updatePlayerState(
+          deviceId: state.isPlayerDevice ? state.myDeviceId : null,
+          deviceName: state.isPlayerDevice ? state.myDeviceName : null,
+          isPlaying: state.isPlaying,
+          positionMs: position.inMilliseconds,
+        )
+        .catchError((_) => <String, dynamic>{});
   }
 
   Future<void> seekRelative(int seconds) async {
@@ -2286,6 +2328,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       return;
     }
 
+    // 1. User queued tracks take top priority
     if (state.userQueue.isNotEmpty) {
       final nextTrack = state.userQueue.first;
       final updatedUserQueue = state.userQueue.sublist(1);
@@ -2294,17 +2337,39 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       return;
     }
 
+    // 2. Single-track repeat mode
     if (state.queueMode == 'repeat_one' && state.currentTrack != null) {
-      seek(Duration.zero);
-      resume();
+      await seek(Duration.zero);
+      await resume();
       return;
     }
 
+    // 3. Current playlist/album queue advance
+    if (state.queue.isNotEmpty) {
+      final curIdx = state.queue.indexWhere(
+        (t) => _isSameTrack(t.videoId, state.currentTrack?.videoId),
+      );
+      final effectiveIdx = curIdx != -1 ? curIdx : state.currentIndex;
+      final nextIndex = effectiveIdx + 1;
+
+      if (nextIndex < state.queue.length) {
+        await playTrack(state.queue[nextIndex], state.queue);
+        return;
+      } else if (state.queueMode == 'repeat_all') {
+        await playTrack(state.queue.first, state.queue);
+        return;
+      }
+    }
+
+    // 4. Server recommendations / autojob fallback
     try {
       final nextRes = await _api.nextPlayerTrack();
       if (nextRes != null) {
         final String? nextId = nextRes['current_track_id']?.toString();
-        if (nextId != null && nextId.isNotEmpty) {
+        // Guard against infinite replay of the same track
+        if (nextId != null &&
+            nextId.isNotEmpty &&
+            !_isSameTrack(nextId, state.currentTrack?.videoId)) {
           List<Track> serverQueue = [];
           if (nextRes.containsKey('queue') && nextRes['queue'] is List) {
             serverQueue = (nextRes['queue'] as List)
@@ -2329,57 +2394,18 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
             }
           }
 
-          if (nextTrack == null) {
-            nextTrack = Track(
-              videoId: nextId,
-              title: 'Loading...',
-              artists: const [],
-              downloadStatus: 'not_in_db',
-              isDownloaded: false,
-            );
-          }
+          nextTrack ??= Track(
+            videoId: nextId,
+            title: 'Loading...',
+            artists: const [],
+            downloadStatus: 'not_in_db',
+            isDownloaded: false,
+          );
 
           final newQueue = serverQueue.isNotEmpty
               ? [nextTrack, ...serverQueue]
               : state.queue;
           await playTrack(nextTrack, newQueue);
-
-          // If stub, eagerly fetch metadata — track may already be downloaded
-          if (nextTrack.artists.isEmpty) {
-            final trackId = nextTrack.videoId;
-            _api
-                .getTrackMetadata(trackId)
-                .then((fullMeta) {
-                  if (_isSameTrack(state.currentTrack?.videoId, trackId)) {
-                    state = state.copyWith(
-                      currentTrack: state.currentTrack!.copyWith(
-                        title: fullMeta.title != 'Unknown Track'
-                            ? fullMeta.title
-                            : state.currentTrack!.title,
-                        artists: fullMeta.artists.isNotEmpty
-                            ? fullMeta.artists
-                            : state.currentTrack!.artists,
-                        album: fullMeta.album ?? state.currentTrack!.album,
-                        duration:
-                            (fullMeta.duration != null &&
-                                fullMeta.duration! > Duration.zero)
-                            ? fullMeta.duration
-                            : state.currentTrack!.duration,
-                        coverUrl:
-                            fullMeta.coverUrl ?? state.currentTrack!.coverUrl,
-                        localPath: fullMeta.localPath,
-                        localCoverPath: fullMeta.localCoverPath,
-                        lyricsText: fullMeta.lyricsText,
-                        lyricsLrc: fullMeta.lyricsLrc,
-                        downloadStatus: 'completed',
-                        isDownloaded: true,
-                      ),
-                    );
-                    _api.notifyLyricsReady(trackId);
-                  }
-                })
-                .catchError((_) {});
-          }
           return;
         }
       }
@@ -2387,30 +2413,19 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       debugPrint('Notice: server player next fallback to local queue: $e');
     }
 
-    if (state.queue.isEmpty) return;
-
-    int nextIndex = state.currentIndex + 1;
-    if (nextIndex >= state.queue.length) {
-      if (state.queueMode == 'repeat_all') {
-        nextIndex = 0;
-      } else {
-        await pause();
-        state = state.copyWith(
-          isPlaying: false,
-          position: Duration.zero,
-          isLoading: false,
-        );
-        return;
-      }
-    }
-
-    await playTrack(state.queue[nextIndex], state.queue);
+    // End of queue reached: stop cleanly
+    await pause();
+    state = state.copyWith(
+      isPlaying: false,
+      position: Duration.zero,
+      isLoading: false,
+    );
   }
 
   Future<void> playPrevious() async {
     // If song is more than 3 seconds in, restart current track
     if (state.position.inSeconds > 3) {
-      seek(Duration.zero);
+      await seek(Duration.zero);
       return;
     }
 
@@ -2422,6 +2437,25 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     if (!state.isPlayerDevice) {
       await _api.previousPlayerTrack();
       return;
+    }
+
+    if (state.queue.isNotEmpty) {
+      final curIdx = state.queue.indexWhere(
+        (t) => _isSameTrack(t.videoId, state.currentTrack?.videoId),
+      );
+      final effectiveIdx = curIdx != -1 ? curIdx : state.currentIndex;
+      final prevIndex = effectiveIdx - 1;
+
+      if (prevIndex >= 0) {
+        await playTrack(state.queue[prevIndex], state.queue);
+        return;
+      } else if (state.queueMode == 'repeat_all') {
+        await playTrack(state.queue.last, state.queue);
+        return;
+      } else {
+        await seek(Duration.zero);
+        return;
+      }
     }
 
     try {
@@ -2477,61 +2511,12 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           if (posMs > 0) {
             await seek(Duration(milliseconds: posMs));
           }
-
-          // History tracks are always downloaded — eagerly enrich metadata
-          final trackId = prevTrack.videoId;
-          _api
-              .getTrackMetadata(trackId)
-              .then((fullMeta) {
-                if (_isSameTrack(state.currentTrack?.videoId, trackId)) {
-                  state = state.copyWith(
-                    currentTrack: state.currentTrack!.copyWith(
-                      title: fullMeta.title != 'Unknown Track'
-                          ? fullMeta.title
-                          : state.currentTrack!.title,
-                      artists: fullMeta.artists.isNotEmpty
-                          ? fullMeta.artists
-                          : state.currentTrack!.artists,
-                      album: fullMeta.album ?? state.currentTrack!.album,
-                      duration:
-                          (fullMeta.duration != null &&
-                              fullMeta.duration! > Duration.zero)
-                          ? fullMeta.duration
-                          : state.currentTrack!.duration,
-                      coverUrl:
-                          fullMeta.coverUrl ?? state.currentTrack!.coverUrl,
-                      localPath: fullMeta.localPath,
-                      localCoverPath: fullMeta.localCoverPath,
-                      lyricsText: fullMeta.lyricsText,
-                      lyricsLrc: fullMeta.lyricsLrc,
-                      downloadStatus: 'completed',
-                      isDownloaded: true,
-                    ),
-                  );
-                  _api.notifyLyricsReady(trackId);
-                }
-              })
-              .catchError((_) {});
           return;
         }
       }
     } catch (e) {
       debugPrint('Notice: Server player previous fallback to local queue: $e');
     }
-
-    if (state.queue.isEmpty) return;
-
-    int prevIndex = state.currentIndex - 1;
-    if (prevIndex < 0) {
-      if (state.queueMode == 'repeat_all') {
-        prevIndex = state.queue.length - 1;
-      } else {
-        seek(Duration.zero);
-        return;
-      }
-    }
-
-    await playTrack(state.queue[prevIndex], state.queue);
   }
 
   bool _isResolutionModalShowing = false;
@@ -2591,6 +2576,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       ).then((selected) async {
         _isResolutionModalShowing = false;
         if (selected == true) {
+          _api.clearProxyStreamError(exception.trackId);
           clearResolvedCache(exception.trackId);
           await playTrack(targetTrack, queue, immediate: true);
         }
@@ -2604,6 +2590,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       ).then((selected) async {
         _isResolutionModalShowing = false;
         if (selected == true) {
+          _api.clearProxyStreamError(targetTrack.videoId);
           clearResolvedCache(targetTrack.videoId);
           await playTrack(targetTrack, queue, immediate: true);
         }
@@ -2617,38 +2604,58 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     final currentlyShuffled = state.isShuffled;
     if (state.queue.isEmpty) return;
 
+    List<Track> newQueue;
+    int newIndex;
+
     if (currentlyShuffled) {
       // Revert to original order
       final currentTrack = state.currentTrack;
-      final newIndex = state.originalQueue.indexWhere(
-        (t) => t.videoId == currentTrack?.videoId,
+      newIndex = state.originalQueue.indexWhere(
+        (t) => _isSameTrack(t.videoId, currentTrack?.videoId),
+      );
+      if (newIndex == -1) newIndex = 0;
+      newQueue = List<Track>.from(
+        state.originalQueue.isNotEmpty ? state.originalQueue : state.queue,
       );
       state = state.copyWith(
         isShuffled: false,
-        queue: state.originalQueue,
+        queue: newQueue,
         currentIndex: newIndex,
       );
     } else {
-      // Shuffle the queue (but keep current track first or adapt index)
-      final originalList = List<Track>.from(state.queue);
+      // Shuffle the queue (but keep current track first)
+      final originalList = List<Track>.from(
+        state.originalQueue.isNotEmpty ? state.originalQueue : state.queue,
+      );
       final currentTrack = state.currentTrack;
 
-      // Shuffle list
-      originalList.shuffle();
-
-      // Make sure current track is in the queue and we update its index
       if (currentTrack != null) {
-        originalList.removeWhere((t) => t.videoId == currentTrack.videoId);
+        originalList.removeWhere(
+          (t) => _isSameTrack(t.videoId, currentTrack.videoId),
+        );
+      }
+      originalList.shuffle();
+      if (currentTrack != null) {
         originalList.insert(0, currentTrack);
       }
 
+      newQueue = originalList;
+      newIndex = 0;
       state = state.copyWith(
         isShuffled: true,
-        originalQueue: state.queue,
-        queue: originalList,
+        originalQueue: state.originalQueue.isNotEmpty ? state.originalQueue : state.queue,
+        queue: newQueue,
         currentIndex: 0,
       );
     }
+
+    _api
+        .updatePlayerState(
+          deviceId: state.isPlayerDevice ? state.myDeviceId : null,
+          deviceName: state.isPlayerDevice ? state.myDeviceName : null,
+          queue: newQueue.map((t) => t.toJson()).toList(),
+        )
+        .catchError((_) => <String, dynamic>{});
   }
 
   void toggleQueueMode() {

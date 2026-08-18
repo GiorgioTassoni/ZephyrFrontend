@@ -580,6 +580,8 @@ class Playlist {
   final String name;
   final String? description;
   final String? ownerName;
+  final bool isOwner;
+  final bool isSaved;
   final String? coverPath;
   final String? coverUrl;
   final bool isPublic;
@@ -595,6 +597,8 @@ class Playlist {
     required this.name,
     this.description,
     this.ownerName,
+    this.isOwner = true,
+    this.isSaved = false,
     this.coverPath,
     this.coverUrl,
     required this.isPublic,
@@ -604,6 +608,42 @@ class Playlist {
     this.updatedAt,
     this.tracks,
   });
+
+  Playlist copyWith({
+    dynamic id,
+    int? userId,
+    String? name,
+    String? description,
+    String? ownerName,
+    bool? isOwner,
+    bool? isSaved,
+    String? coverPath,
+    String? coverUrl,
+    bool? isPublic,
+    int? trackCount,
+    int? downloadedCount,
+    String? createdAt,
+    String? updatedAt,
+    List<Track>? tracks,
+  }) {
+    return Playlist(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      ownerName: ownerName ?? this.ownerName,
+      isOwner: isOwner ?? this.isOwner,
+      isSaved: isSaved ?? this.isSaved,
+      coverPath: coverPath ?? this.coverPath,
+      coverUrl: coverUrl ?? this.coverUrl,
+      isPublic: isPublic ?? this.isPublic,
+      trackCount: trackCount ?? this.trackCount,
+      downloadedCount: downloadedCount ?? this.downloadedCount,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      tracks: tracks ?? this.tracks,
+    );
+  }
 
   factory Playlist.fromJson(Map<String, dynamic> json) {
     String playlistId = (json['id'] ?? 0).toString().trim();
@@ -644,6 +684,13 @@ class Playlist {
           : int.tryParse(json['downloaded_count'].toString());
     }
 
+    final bool isOwner = json['is_owner'] is bool
+        ? json['is_owner'] as bool
+        : (json['owner_name'] == null || json['owner_name'].toString().isEmpty);
+    final bool isSaved = json['is_saved'] is bool
+        ? json['is_saved'] as bool
+        : false;
+
     return Playlist(
       id: playlistId,
       userId: json['user_id'] is int
@@ -652,6 +699,8 @@ class Playlist {
       name: (json['title'] ?? json['name'] ?? 'Unnamed Playlist').toString(),
       description: json['description']?.toString(),
       ownerName: json['owner_name']?.toString(),
+      isOwner: isOwner,
+      isSaved: isSaved,
       coverPath: json['cover_path']?.toString(),
       coverUrl: (json['cover_url'] ?? json['cover_path'])?.toString(),
       isPublic: json['is_public'] ?? false,

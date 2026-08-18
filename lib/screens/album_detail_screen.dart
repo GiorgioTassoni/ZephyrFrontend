@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../providers/library_provider.dart';
+import '../providers/player_provider.dart';
 import '../theme/colors.dart';
 import '../theme/zephyr_theme.dart';
 import '../widgets/cover_image.dart';
@@ -100,6 +101,38 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
         ZephyrToast.show(context, 'Failed to download album: $e', isError: true);
       }
     }
+  }
+
+  void _playAllTracks() {
+    if (_album == null || _album!.tracks == null || _album!.tracks!.isEmpty) return;
+    final enrichedTracks = _album!.tracks!.map((t) => t.copyWith(
+      coverUrl: t.coverUrl ?? _album!.coverUrl,
+      album: t.album ?? _album!.name,
+      albumId: t.albumId ?? _album!.id,
+    )).toList();
+
+    ref.read(playerProvider.notifier).playTrack(
+      enrichedTracks.first,
+      enrichedTracks,
+      isNewQueue: true,
+      origin: 'context',
+    );
+  }
+
+  void _shufflePlayAllTracks() {
+    if (_album == null || _album!.tracks == null || _album!.tracks!.isEmpty) return;
+    final enrichedTracks = _album!.tracks!.map((t) => t.copyWith(
+      coverUrl: t.coverUrl ?? _album!.coverUrl,
+      album: t.album ?? _album!.name,
+      albumId: t.albumId ?? _album!.id,
+    )).toList()..shuffle();
+
+    ref.read(playerProvider.notifier).playTrack(
+      enrichedTracks.first,
+      enrichedTracks,
+      isNewQueue: true,
+      origin: 'context',
+    );
   }
 
   @override
@@ -238,13 +271,37 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                             ],
                           ),
                           const SizedBox(height: 16),
-                          if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_'))
-                            ElevatedButton.icon(
-                              style: ZephyrTheme.primaryPillStyle(),
-                              onPressed: _downloadAllTracks,
-                              icon: const Icon(Icons.download, size: 18),
-                              label: const Text('Download Album'),
-                            ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              ElevatedButton.icon(
+                                style: ZephyrTheme.primaryPillStyle(),
+                                onPressed: tracks.isEmpty ? null : _playAllTracks,
+                                icon: const Icon(Icons.play_arrow_rounded, size: 22, color: Colors.black),
+                                label: const Text('Play All', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                              ),
+                              const SizedBox(width: 12),
+                              IconButton(
+                                style: IconButton.styleFrom(
+                                  backgroundColor: ZephyrColors.primary.withValues(alpha: 0.15),
+                                  foregroundColor: ZephyrColors.primary,
+                                  padding: const EdgeInsets.all(10),
+                                ),
+                                icon: const Icon(Icons.shuffle_rounded, size: 20),
+                                onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
+                                tooltip: 'Shuffle Play',
+                              ),
+                              if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_')) ...[
+                                const SizedBox(width: 12),
+                                ElevatedButton.icon(
+                                  style: ZephyrTheme.primaryPillStyle(),
+                                  onPressed: _downloadAllTracks,
+                                  icon: const Icon(Icons.download, size: 18),
+                                  label: const Text('Download Album'),
+                                ),
+                              ],
+                            ],
+                          ),
                         ],
                       ),
                     ] else ...[
@@ -333,14 +390,37 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                                     ],
                                   ],
                                 ),
-                                const SizedBox(height: 20),
-                                if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_'))
-                                  ElevatedButton.icon(
-                                    style: ZephyrTheme.primaryPillStyle(),
-                                    onPressed: _downloadAllTracks,
-                                    icon: const Icon(Icons.download, size: 18),
-                                    label: const Text('Download Album'),
-                                  ),
+                                 const SizedBox(height: 20),
+                                 Row(
+                                   children: [
+                                     ElevatedButton.icon(
+                                       style: ZephyrTheme.primaryPillStyle(),
+                                       onPressed: tracks.isEmpty ? null : _playAllTracks,
+                                       icon: const Icon(Icons.play_arrow_rounded, size: 22, color: Colors.black),
+                                       label: const Text('Play All', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                                     ),
+                                     const SizedBox(width: 12),
+                                     IconButton(
+                                       style: IconButton.styleFrom(
+                                         backgroundColor: ZephyrColors.primary.withValues(alpha: 0.15),
+                                         foregroundColor: ZephyrColors.primary,
+                                         padding: const EdgeInsets.all(10),
+                                       ),
+                                       icon: const Icon(Icons.shuffle_rounded, size: 20),
+                                       onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
+                                       tooltip: 'Shuffle Play',
+                                     ),
+                                     if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_')) ...[
+                                       const SizedBox(width: 12),
+                                       ElevatedButton.icon(
+                                         style: ZephyrTheme.primaryPillStyle(),
+                                         onPressed: _downloadAllTracks,
+                                         icon: const Icon(Icons.download, size: 18),
+                                         label: const Text('Download Album'),
+                                       ),
+                                     ],
+                                   ],
+                                 ),
                               ],
                             ),
                           ),

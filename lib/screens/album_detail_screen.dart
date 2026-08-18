@@ -31,6 +31,14 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     _fetchAlbumDetails(bypassCache: false);
   }
 
+  @override
+  void didUpdateWidget(AlbumDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.browseId != widget.browseId) {
+      _fetchAlbumDetails(bypassCache: false);
+    }
+  }
+
   Future<void> _fetchAlbumDetails({bool bypassCache = false}) async {
     setState(() {
       _isLoading = true;

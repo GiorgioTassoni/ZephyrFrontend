@@ -457,8 +457,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               },
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
         ],
+        const SizedBox(height: 80),
       ],
     );
   }
@@ -616,32 +617,15 @@ class _SearchPlaylistCard extends ConsumerStatefulWidget {
 
 class _SearchPlaylistCardState extends ConsumerState<_SearchPlaylistCard> {
   bool _isHovered = false;
-  late bool _isSaved;
 
-  @override
-  void initState() {
-    super.initState();
-    _isSaved = widget.playlist.isSaved;
-  }
-
-  @override
-  void didUpdateWidget(_SearchPlaylistCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.playlist.isSaved != widget.playlist.isSaved) {
-      _isSaved = widget.playlist.isSaved;
-    }
-  }
-
-  Future<void> _toggleSave() async {
+  Future<void> _toggleSave(bool isCurrentlySaved) async {
     final libNotifier = ref.read(libraryProvider.notifier);
     try {
-      if (_isSaved) {
+      if (isCurrentlySaved) {
         await libNotifier.unsavePlaylist(widget.playlist.id);
-        setState(() => _isSaved = false);
         if (mounted) ZephyrToast.show(context, 'Playlist removed from your library');
       } else {
         await libNotifier.savePlaylist(widget.playlist.id);
-        setState(() => _isSaved = true);
         if (mounted) ZephyrToast.show(context, 'Playlist saved to your library');
       }
     } catch (e) {
@@ -653,6 +637,13 @@ class _SearchPlaylistCardState extends ConsumerState<_SearchPlaylistCard> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
     final currentUsername = authState.username;
+    final libraryState = ref.watch(libraryProvider);
+
+    final bool isInUserLibrary = libraryState.playlists.any(
+      (p) => p.id.toString() == widget.playlist.id.toString(),
+    );
+    final bool isSaved = widget.playlist.isSaved || isInUserLibrary;
+
     final bool isOwner = widget.playlist.isOwner &&
         (currentUsername == null || widget.playlist.ownerName == null || widget.playlist.ownerName!.isEmpty || widget.playlist.ownerName == currentUsername);
     final bool isLocalZephyrPlaylist = !widget.playlist.id.toString().startsWith('dz_');
@@ -717,12 +708,12 @@ class _SearchPlaylistCardState extends ConsumerState<_SearchPlaylistCard> {
                 if (isLocalZephyrPlaylist && !isOwner) ...[
                   IconButton(
                     icon: Icon(
-                      _isSaved ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
+                      isSaved ? Icons.bookmark_added_rounded : Icons.bookmark_add_outlined,
                       size: 20,
-                      color: _isSaved ? ZephyrColors.primary : ZephyrColors.textDim,
+                      color: isSaved ? ZephyrColors.primary : ZephyrColors.textDim,
                     ),
-                    onPressed: _toggleSave,
-                    tooltip: _isSaved ? 'Remove from Library' : 'Save to Library',
+                    onPressed: () => _toggleSave(isSaved),
+                    tooltip: isSaved ? 'Remove from Library' : 'Save to Library',
                   ),
                 ],
               ],

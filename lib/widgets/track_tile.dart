@@ -142,6 +142,11 @@ class _TrackTileState extends ConsumerState<TrackTile> {
       ),
     );
 
+    final isMobile = MediaQuery.of(context).size.width < 700;
+    if (!isMobile) {
+      return tile;
+    }
+
     return Dismissible(
       key: ValueKey('swipe_queue_${widget.track.videoId}_${widget.track.hashCode}'),
       direction: DismissDirection.startToEnd,

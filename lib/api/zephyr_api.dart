@@ -1326,6 +1326,7 @@ class ZephyrApi {
 
   Future<Map<String, dynamic>> uploadTrack({
     required File file,
+    File? cover,
     String? title,
     String? artists,
     String? album,
@@ -1339,6 +1340,12 @@ class ZephyrApi {
           filename: file.path.split('/').last,
         ),
       };
+      if (cover != null) {
+        formMap['cover'] = await MultipartFile.fromFile(
+          cover.path,
+          filename: cover.path.split('/').last,
+        );
+      }
       if (title != null) formMap['title'] = title;
       if (artists != null) formMap['artists'] = artists;
       if (album != null) formMap['album'] = album;
@@ -1352,6 +1359,18 @@ class ZephyrApi {
         options: Options(contentType: 'multipart/form-data'),
       );
       return response.data;
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> addTrackFromYouTube(String url) async {
+    try {
+      final response = await _dio.post(
+        '/api/curator/tracks/from-youtube',
+        data: {'url': url.trim()},
+      );
+      return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
       throw _handleDioError(e);
     }

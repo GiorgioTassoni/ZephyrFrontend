@@ -111,21 +111,24 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         break;
       case ScreenType.album:
         currentScreenWidget = AlbumDetailScreen(
+          key: ValueKey('album_${navState.currentScreen.id}'),
           browseId: navState.currentScreen.id!,
         );
         break;
       case ScreenType.artist:
         currentScreenWidget = ArtistDetailScreen(
+          key: ValueKey('artist_${navState.currentScreen.id}'),
           channelId: navState.currentScreen.id!,
         );
         break;
       case ScreenType.playlist:
+        final pId = navState.currentScreen.id ??
+            (navState.currentScreen.intId != null
+                ? navState.currentScreen.intId.toString()
+                : '');
         currentScreenWidget = PlaylistDetailScreen(
-          playlistId:
-              navState.currentScreen.id ??
-              (navState.currentScreen.intId != null
-                  ? navState.currentScreen.intId.toString()
-                  : ''),
+          key: ValueKey('playlist_$pId'),
+          playlistId: pId,
         );
         break;
       case ScreenType.admin:

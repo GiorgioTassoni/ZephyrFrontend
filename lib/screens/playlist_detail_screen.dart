@@ -190,11 +190,10 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     );
   }
 
-  Future<void> _toggleSavePlaylist() async {
+  Future<void> _toggleSavePlaylist(bool isCurrentlySaved) async {
     if (_playlist == null || _playlist!.id.toString().startsWith('dz_')) return;
-    final isSaved = _playlist!.isSaved;
     try {
-      if (isSaved) {
+      if (isCurrentlySaved) {
         await ref.read(libraryProvider.notifier).unsavePlaylist(_playlist!.id);
         setState(() {
           _playlist = _playlist!.copyWith(isSaved: false);
@@ -279,6 +278,13 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
     final authState = ref.watch(authProvider);
     final currentUsername = authState.username;
+    final libraryState = ref.watch(libraryProvider);
+
+    final bool isInLibrary = libraryState.playlists.any(
+      (p) => p.id.toString() == _playlist!.id.toString(),
+    );
+    final bool isSaved = _playlist!.isSaved || isInLibrary;
+
     final bool isPlaylistOwner = _playlist!.isOwner &&
         (currentUsername == null || _playlist!.ownerName == null || _playlist!.ownerName!.isEmpty || _playlist!.ownerName == currentUsername);
 
@@ -426,22 +432,22 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                   const SizedBox(width: 12),
                                   IconButton(
                                     style: IconButton.styleFrom(
-                                      backgroundColor: _playlist!.isSaved
+                                      backgroundColor: isSaved
                                           ? ZephyrColors.primary.withValues(alpha: 0.15)
                                           : ZephyrColors.bgLight,
-                                      foregroundColor: _playlist!.isSaved
+                                      foregroundColor: isSaved
                                           ? ZephyrColors.primary
                                           : ZephyrColors.textDim,
                                       padding: const EdgeInsets.all(10),
                                     ),
                                     icon: Icon(
-                                      _playlist!.isSaved
+                                      isSaved
                                           ? Icons.bookmark_added_rounded
                                           : Icons.bookmark_add_outlined,
                                       size: 20,
                                     ),
-                                    onPressed: _toggleSavePlaylist,
-                                    tooltip: _playlist!.isSaved
+                                    onPressed: () => _toggleSavePlaylist(isSaved),
+                                    tooltip: isSaved
                                         ? 'Remove from Your Library'
                                         : 'Save to Your Library',
                                   ),
@@ -594,22 +600,22 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                         const SizedBox(width: 12),
                                         IconButton(
                                           style: IconButton.styleFrom(
-                                            backgroundColor: _playlist!.isSaved
+                                            backgroundColor: isSaved
                                                 ? ZephyrColors.primary.withValues(alpha: 0.15)
                                                 : ZephyrColors.bgLight,
-                                            foregroundColor: _playlist!.isSaved
+                                            foregroundColor: isSaved
                                                 ? ZephyrColors.primary
                                                 : ZephyrColors.textDim,
                                             padding: const EdgeInsets.all(10),
                                           ),
                                           icon: Icon(
-                                            _playlist!.isSaved
+                                            isSaved
                                                 ? Icons.bookmark_added_rounded
                                                 : Icons.bookmark_add_outlined,
                                             size: 20,
                                           ),
-                                          onPressed: _toggleSavePlaylist,
-                                          tooltip: _playlist!.isSaved
+                                          onPressed: () => _toggleSavePlaylist(isSaved),
+                                          tooltip: isSaved
                                               ? 'Remove from Your Library'
                                               : 'Save to Your Library',
                                         ),
@@ -651,7 +657,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                           } else if (val == 'delete') {
                                             _deletePlaylist();
                                           } else if (val == 'toggle_save') {
-                                            _toggleSavePlaylist();
+                                            _toggleSavePlaylist(isSaved);
                                           } else if (val == 'reorder') {
                                             setState(() => _isReorderingMode = !_isReorderingMode);
                                           }
@@ -698,17 +704,17 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                               child: Row(
                                                 children: [
                                                   Icon(
-                                                    _playlist!.isSaved
+                                                    isSaved
                                                         ? Icons.bookmark_remove_outlined
                                                         : Icons.bookmark_add_outlined,
                                                     size: 20,
-                                                    color: _playlist!.isSaved ? ZephyrColors.error : ZephyrColors.textDim,
+                                                    color: isSaved ? ZephyrColors.error : ZephyrColors.textDim,
                                                   ),
                                                   const SizedBox(width: 8),
                                                   Text(
-                                                    _playlist!.isSaved ? 'Remove from Library' : 'Save to Library',
+                                                    isSaved ? 'Remove from Library' : 'Save to Library',
                                                     style: TextStyle(
-                                                      color: _playlist!.isSaved ? ZephyrColors.error : ZephyrColors.text,
+                                                      color: isSaved ? ZephyrColors.error : ZephyrColors.text,
                                                     ),
                                                   ),
                                                 ],

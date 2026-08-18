@@ -122,7 +122,10 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       case ScreenType.playlist:
         currentScreenWidget = PlaylistDetailScreen(
           playlistId:
-              navState.currentScreen.id ?? navState.currentScreen.intId!,
+              navState.currentScreen.id ??
+              (navState.currentScreen.intId != null
+                  ? navState.currentScreen.intId.toString()
+                  : ''),
         );
         break;
       case ScreenType.admin:

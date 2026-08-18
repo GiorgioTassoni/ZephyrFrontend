@@ -159,7 +159,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   return PlaylistCard(
                     playlist: playlist,
                     onTap: () {
-                      navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, intId: playlist.id));
+                      navNotifier.navigateTo(
+                        ScreenState(
+                          type: ScreenType.playlist,
+                          id: playlist.id.toString(),
+                          intId: playlist.id is int
+                              ? playlist.id as int
+                              : int.tryParse(playlist.id.toString()),
+                        ),
+                      );
                     },
                   );
                 }
@@ -169,7 +177,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 return PlaylistCard(
                   playlist: playlist,
                   onTap: () {
-                    navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, intId: playlist.id));
+                    navNotifier.navigateTo(
+                      ScreenState(
+                        type: ScreenType.playlist,
+                        id: playlist.id.toString(),
+                        intId: playlist.id is int
+                            ? playlist.id as int
+                            : int.tryParse(playlist.id.toString()),
+                      ),
+                    );
                   },
                 );
               }

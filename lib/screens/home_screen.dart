@@ -209,10 +209,18 @@ class HomeScreen extends ConsumerWidget {
       items.add(
         _QuickCard(
           title: pl.name,
-          subtitle: '${pl.trackCount ?? 0} ${pl.trackCount == 1 ? 'track' : 'tracks'}',
+          subtitle: pl.description != null && pl.description!.isNotEmpty
+              ? pl.description!
+              : 'Playlist',
           iconWidget: CoverImage(playlistId: pl.id, size: 56, borderRadius: 0),
           onTap: () {
-            navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, intId: pl.id));
+            navNotifier.navigateTo(
+              ScreenState(
+                type: ScreenType.playlist,
+                id: pl.id.toString(),
+                intId: pl.id is int ? pl.id as int : int.tryParse(pl.id.toString()),
+              ),
+            );
           },
         ),
       );
@@ -579,7 +587,15 @@ class _HorizontalPlaylistCardState extends State<_HorizontalPlaylistCard> {
           ),
           child: InkWell(
             onTap: () {
-              widget.navNotifier.navigateTo(ScreenState(type: ScreenType.playlist, intId: widget.playlist.id));
+              widget.navNotifier.navigateTo(
+                ScreenState(
+                  type: ScreenType.playlist,
+                  id: widget.playlist.id.toString(),
+                  intId: widget.playlist.id is int
+                      ? widget.playlist.id as int
+                      : int.tryParse(widget.playlist.id.toString()),
+                ),
+              );
             },
             borderRadius: BorderRadius.circular(8),
             child: Padding(

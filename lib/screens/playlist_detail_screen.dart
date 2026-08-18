@@ -364,7 +364,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                               ),
                               const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
                               Text(
-                                '${tracks.length} songs',
+                                '${_playlist!.trackCount ?? tracks.length} songs',
                                 style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                               ),
                             ],
@@ -509,7 +509,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                     const Icon(Icons.circle, size: 4, color: ZephyrColors.textDim),
                                     const SizedBox(width: 12),
                                     Text(
-                                      '${tracks.length} songs',
+                                      '${_playlist!.trackCount ?? tracks.length} songs',
                                       style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                                     ),
                                   ],

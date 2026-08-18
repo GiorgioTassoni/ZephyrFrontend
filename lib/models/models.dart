@@ -621,7 +621,13 @@ class Playlist {
     }
 
     int? parsedTrackCount;
-    final rawTrackCount = json['track_count'] ?? json['trackCount'];
+    final rawTrackCount = json['track_count'] ??
+        json['trackCount'] ??
+        json['tracks_count'] ??
+        json['nb_tracks'] ??
+        json['total_tracks'] ??
+        json['songs_count'] ??
+        json['song_count'];
     if (rawTrackCount != null) {
       if (rawTrackCount is int) {
         parsedTrackCount = rawTrackCount;

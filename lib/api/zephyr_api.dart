@@ -880,13 +880,25 @@ class ZephyrApi {
     String resolutionId,
     String candidateId,
   ) async {
+    final body = {'candidate_id': candidateId};
+    debugPrint(
+      '🚀 [ZephyrApi.selectImportResolution] POST /api/import/resolution/$resolutionId\n'
+      '   Payload: $body',
+    );
     try {
       final response = await _dio.post(
         '/api/import/resolution/$resolutionId',
-        data: {'candidate_id': candidateId},
+        data: body,
+      );
+      debugPrint(
+        '✅ [ZephyrApi.selectImportResolution] Success ${response.statusCode}: ${response.data}',
       );
       return response.data;
     } on DioException catch (e) {
+      debugPrint(
+        '❌ [ZephyrApi.selectImportResolution] Failed ${e.response?.statusCode}: ${e.response?.data}\n'
+        '   Sent Body: $body',
+      );
       throw _handleDioError(e);
     }
   }
@@ -900,6 +912,37 @@ class ZephyrApi {
       );
       return response.data;
     } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> searchImportResolution(
+    String resolutionId,
+    String query,
+  ) async {
+    try {
+      final response = await _dio.post(
+        '/api/import/resolution/$resolutionId/search',
+        data: {'query': query},
+      );
+      return response.data;
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> skipImportResolution(
+    String resolutionId,
+  ) async {
+    debugPrint('🚀 [ZephyrApi.skipImportResolution] POST /api/import/resolution/$resolutionId/skip');
+    try {
+      final response = await _dio.post(
+        '/api/import/resolution/$resolutionId/skip',
+      );
+      debugPrint('✅ [ZephyrApi.skipImportResolution] Success: ${response.data}');
+      return response.data;
+    } on DioException catch (e) {
+      debugPrint('❌ [ZephyrApi.skipImportResolution] Error ${e.response?.statusCode}: ${e.response?.data}');
       throw _handleDioError(e);
     }
   }

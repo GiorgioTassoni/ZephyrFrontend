@@ -432,7 +432,40 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
               'Import your Spotify playlists by uploading a CSV file. Live progress updates in real-time without polling.',
               style: TextStyle(color: ZephyrColors.textDim, fontSize: 14),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 16),
+
+            // 3-Day Resolution Expiry Warning Banner
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: Colors.amberAccent.withValues(alpha: 0.35),
+                ),
+              ),
+              child: const Row(
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: Colors.amberAccent,
+                    size: 20,
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Notice: Import review items remain open for 3 days before expiring. Any tracks already downloaded or matched are permanently saved in your library.',
+                      style: TextStyle(
+                        color: Colors.amberAccent,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
 
             if (_importHistory.isNotEmpty || _isLoadingHistory) ...[
               _buildSavedImportsSelector(),
@@ -694,43 +727,101 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                                     ],
                                   ),
                                 ),
-                                ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.amberAccent,
-                                    foregroundColor: Colors.black,
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Skip Song',
+                                      icon: const Icon(
+                                        Icons.skip_next_rounded,
+                                        color: ZephyrColors.textDim,
+                                        size: 20,
+                                      ),
+                                      onPressed: () async {
+                                        if (resId.isEmpty) return;
+                                        final confirm = await showDialog<bool>(
+                                          context: context,
+                                          builder: (ctx) => AlertDialog(
+                                            backgroundColor: ZephyrColors.bgCard,
+                                            title: const Text('Skip Song?'),
+                                            content: Text(
+                                              'Skip "$title" from this import? It will not be downloaded.',
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () => Navigator.of(ctx).pop(false),
+                                                child: const Text(
+                                                  'Cancel',
+                                                  style: TextStyle(color: ZephyrColors.textDim),
+                                                ),
+                                              ),
+                                              ElevatedButton(
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.redAccent,
+                                                ),
+                                                onPressed: () => Navigator.of(ctx).pop(true),
+                                                child: const Text(
+                                                  'Skip',
+                                                  style: TextStyle(color: Colors.white),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                        if (confirm == true && mounted) {
+                                          try {
+                                            await _api.skipImportResolution(resId);
+                                            ZephyrToast.show(context, 'Skipped "$title"');
+                                          } catch (_) {}
+                                          final updated = await _api.getImportStatus(status.jobId);
+                                          if (mounted) {
+                                            setState(() {
+                                              _importStatus = updated;
+                                            });
+                                          }
+                                        }
+                                      },
                                     ),
-                                  ),
-                                  onPressed: () async {
-                                    final exc = ResolutionRequiredException(
-                                      resolutionId: resId.isNotEmpty ? resId : null,
-                                      trackId: trackId,
-                                      title: title,
-                                      artists: artistsList,
-                                      candidates: candidatesList,
-                                    );
-                                    final selected = await ResolutionCandidateModal.show(
-                                      context,
-                                      exc,
-                                      isImportResolution: true,
-                                    );
-                                    if (selected == true && mounted) {
-                                      final updated = await _api.getImportStatus(status.jobId);
-                                      setState(() {
-                                        _importStatus = updated;
-                                      });
-                                    }
-                                  },
-                                  icon: const Icon(Icons.find_in_page_rounded, size: 16),
-                                  label: const Text(
-                                    'Select Match',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
+                                    const SizedBox(width: 4),
+                                    ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.amberAccent,
+                                        foregroundColor: Colors.black,
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      ),
+                                      onPressed: () async {
+                                        final exc = ResolutionRequiredException(
+                                          resolutionId: resId.isNotEmpty ? resId : null,
+                                          trackId: trackId,
+                                          title: title,
+                                          artists: artistsList,
+                                          candidates: candidatesList,
+                                        );
+                                        final selected = await ResolutionCandidateModal.show(
+                                          context,
+                                          exc,
+                                          isImportResolution: true,
+                                        );
+                                        if (selected == true && mounted) {
+                                          final updated = await _api.getImportStatus(status.jobId);
+                                          setState(() {
+                                            _importStatus = updated;
+                                          });
+                                        }
+                                      },
+                                      icon: const Icon(Icons.find_in_page_rounded, size: 16),
+                                      label: const Text(
+                                        'Select Match',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ),
                               ],
                             ),

@@ -145,6 +145,8 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     mediaItem.add(item);
   }
 
+  Timer? _stallRecoveryTimer;
+
   /// Play audio stream URL directly
   Future<void> playUrl(
     String url,
@@ -152,6 +154,8 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     String apiBaseUrl, {
     Duration? initialPosition,
   }) async {
+    _stallRecoveryTimer?.cancel();
+    _stallRecoveryTimer = null;
     try {
       setTrackMediaItem(track, apiBaseUrl);
       // The caller applies the current volume before this method. Reapplying
@@ -166,6 +170,23 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
         await _player.seek(initialPosition);
       }
       await _player.play();
+
+      // On Linux, if GStreamer opened an HTTP stream for a completed track but stalled at 0:00,
+      // this watchdog recovers the pipeline.
+      if (track.downloadStatus == 'completed' || track.isDownloaded) {
+        _stallRecoveryTimer = Timer(const Duration(seconds: 3), () async {
+          if (_player.playing && _player.position == Duration.zero) {
+            try {
+              debugPrint('ZephyrAudioHandler: Stall detected at 0:00, recovering pipeline...');
+              await _player.setUrl(url);
+              if (initialPosition != null && initialPosition > Duration.zero) {
+                await _player.seek(initialPosition);
+              }
+              await _player.play();
+            } catch (_) {}
+          }
+        });
+      }
     } catch (e) {
       debugPrint('ZephyrAudioHandler playUrl error: $e');
       rethrow;
@@ -179,6 +200,8 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     String apiBaseUrl, {
     Duration? initialPosition,
   }) async {
+    _stallRecoveryTimer?.cancel();
+    _stallRecoveryTimer = null;
     try {
       setTrackMediaItem(track, apiBaseUrl);
       await _player.setVolume(_player.volume);
@@ -202,6 +225,8 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> pause() async {
+    _stallRecoveryTimer?.cancel();
+    _stallRecoveryTimer = null;
     try {
       await _player.pause();
     } catch (_) {}
@@ -209,6 +234,8 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> stop() async {
+    _stallRecoveryTimer?.cancel();
+    _stallRecoveryTimer = null;
     try {
       await _player.stop();
     } catch (_) {}

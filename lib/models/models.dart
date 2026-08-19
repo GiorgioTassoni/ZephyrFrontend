@@ -805,10 +805,11 @@ class ResolutionCandidate {
   final String title;
   final List<String> artists;
   final int durationSeconds;
-  final String videoType; // 'ATV' or 'OMV'
+  final String videoType; // 'ATV' or 'OMV' or 'LOCAL'
   final String? thumbnail;
   final int matchScore;
   final List<String> matchReasons;
+  final String? provider; // 'local', 'deezer', 'youtube'
 
   ResolutionCandidate({
     required this.videoId,
@@ -819,11 +820,24 @@ class ResolutionCandidate {
     this.thumbnail,
     required this.matchScore,
     required this.matchReasons,
+    this.provider,
   });
 
+  bool get isLocal =>
+      provider == 'local' ||
+      videoType.toUpperCase() == 'LOCAL' ||
+      videoId.startsWith('local_');
+
   factory ResolutionCandidate.fromJson(Map<String, dynamic> json) {
+    final rawVideoId = (json['video_id'] ??
+            json['videoId'] ??
+            json['candidate_id'] ??
+            json['id'] ??
+            '')
+        .toString();
+
     return ResolutionCandidate(
-      videoId: (json['video_id'] ?? json['videoId'] ?? '').toString(),
+      videoId: rawVideoId,
       title: (json['title'] ?? '').toString(),
       artists: json['artists'] is List
           ? (json['artists'] as List).map((e) => e.toString()).toList()
@@ -835,6 +849,7 @@ class ResolutionCandidate {
       matchReasons: json['match_reasons'] is List
           ? (json['match_reasons'] as List).map((e) => e.toString()).toList()
           : [],
+      provider: json['provider']?.toString(),
     );
   }
 }

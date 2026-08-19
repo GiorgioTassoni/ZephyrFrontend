@@ -49,7 +49,10 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    Future.microtask(() => ref.read(libraryProvider.notifier).loadFavorites());
+    final libraryState = ref.read(libraryProvider);
+    if (libraryState.favorites.isEmpty) {
+      Future.microtask(() => ref.read(libraryProvider.notifier).loadFavorites());
+    }
   }
 
   @override
@@ -117,6 +120,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
       body: CustomScrollView(
+        key: const PageStorageKey('favorites_custom_scroll_view'),
         controller: _scrollController,
         slivers: [
           // Hero Banner Header

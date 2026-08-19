@@ -67,8 +67,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final authState = ref.read(authProvider);
     if (widget.initialTabIndex == 0) {
       _currentView = LibraryView.favorites;
-      // Trigger a fresh API load so the list is always server-ordered
-      Future.microtask(() => ref.read(libraryProvider.notifier).loadFavorites());
+      final libraryState = ref.read(libraryProvider);
+      if (libraryState.favorites.isEmpty) {
+        Future.microtask(() => ref.read(libraryProvider.notifier).loadFavorites());
+      }
     } else if (widget.initialTabIndex == 2 && authState.isAdmin) {
       _currentView = LibraryView.vpsSongs;
     } else {

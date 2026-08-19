@@ -82,8 +82,11 @@ class ResolutionCandidateModal extends ConsumerStatefulWidget {
 class _ResolutionCandidateModalState
     extends ConsumerState<ResolutionCandidateModal> {
   List<ResolutionCandidate> _candidates = [];
+  List<ResolutionCandidate> _localMatches = [];
+  String? _provider;
   bool _isLoadingCandidates = false;
   String? _submittingVideoId;
+  bool _isSkipping = false;
   String? _errorMessage;
   String? _resolutionId;
   late TextEditingController _searchController;
@@ -108,6 +111,13 @@ class _ResolutionCandidateModalState
     super.dispose();
   }
 
+  String? _getEffectiveThumbnail(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    final base = ZephyrApi().baseUrl;
+    return '$base${raw.startsWith('/') ? '' : '/'}$raw';
+  }
+
   Future<void> _fetchCandidatesFromApi() async {
     setState(() => _isLoadingCandidates = true);
     try {
@@ -121,18 +131,32 @@ class _ResolutionCandidateModalState
         if (res['resolution_id'] != null) {
           _resolutionId = res['resolution_id'].toString();
         }
+        if (res['provider'] != null) {
+          _provider = res['provider'].toString();
+        }
+        final rawLocal = res['local_matches'];
+        List<ResolutionCandidate> fetchedLocal = [];
+        if (rawLocal is List) {
+          fetchedLocal = rawLocal
+              .map((c) => ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)))
+              .toList();
+        }
+
         final rawCand =
             res['candidates'] ??
             (res['detail'] is Map ? res['detail']['candidates'] : null);
-        if (rawCand is List) {
-          final fetched = rawCand
-              .map(
-                (c) =>
-                    ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)),
-              )
-              .toList();
+        if (rawCand is List || rawLocal is List) {
+          final fetchedCand = (rawCand is List)
+              ? rawCand
+                  .map(
+                    (c) =>
+                        ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)),
+                  )
+                  .toList()
+              : <ResolutionCandidate>[];
           setState(() {
-            _candidates = fetched;
+            _localMatches = fetchedLocal;
+            _candidates = fetchedCand;
             _isLoadingCandidates = false;
           });
           return;
@@ -155,10 +179,12 @@ class _ResolutionCandidateModalState
     });
 
     try {
+      final activeResId = _resolutionId ?? widget.exception.resolutionId;
       final res =
-          widget.isImportResolution && widget.exception.resolutionId != null
-          ? await ZephyrApi().retryImportResolution(
-              widget.exception.resolutionId!,
+          widget.isImportResolution && activeResId != null
+          ? await ZephyrApi().searchImportResolution(
+              activeResId,
+              query.trim(),
             )
           : await ZephyrApi().searchTrackResolution(
               widget.exception.trackId,
@@ -167,21 +193,34 @@ class _ResolutionCandidateModalState
       if (res['resolution_id'] != null) {
         _resolutionId = res['resolution_id'].toString();
       }
-      List<ResolutionCandidate> fetched = [];
+      if (res['provider'] != null) {
+        _provider = res['provider'].toString();
+      }
+
+      List<ResolutionCandidate> fetchedLocal = [];
+      final rawLocal = res['local_matches'];
+      if (rawLocal is List) {
+        fetchedLocal = rawLocal
+            .map((c) => ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)))
+            .toList();
+      }
+
+      List<ResolutionCandidate> fetchedCand = [];
       final rawCand = res['candidates'];
       if (rawCand is List) {
-        fetched = rawCand
+        fetchedCand = rawCand
             .map(
               (c) => ResolutionCandidate.fromJson(Map<String, dynamic>.from(c)),
             )
             .toList();
       }
       setState(() {
-        _candidates = fetched;
+        _localMatches = fetchedLocal;
+        _candidates = fetchedCand;
         _isLoadingCandidates = false;
-        if (fetched.isEmpty) {
+        if (fetchedCand.isEmpty && fetchedLocal.isEmpty) {
           _errorMessage =
-              'No YouTube Music results found for "$query". Try another search term.';
+              'No results found for "$query". Try another search term.';
         }
       });
     } catch (e) {
@@ -281,14 +320,316 @@ class _ResolutionCandidateModalState
     }
   }
 
+  Widget _buildCandidateCard(
+    ResolutionCandidate c, {
+    bool isLocal = false,
+    bool isSelectionDisabled = false,
+  }) {
+    final isSubmitting = _submittingVideoId == c.videoId;
+    final isOMV = c.videoType == 'OMV';
+    final thumbUrl = _getEffectiveThumbnail(c.thumbnail);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isLocal
+            ? Colors.teal.withValues(alpha: 0.1)
+            : ZephyrColors.bgLight.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isLocal
+              ? Colors.tealAccent.withValues(alpha: 0.35)
+              : (isOMV
+                  ? Colors.purple.withValues(alpha: 0.3)
+                  : Colors.white.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Candidate Thumbnail
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: thumbUrl != null && thumbUrl.isNotEmpty
+                ? CachedNetworkImage(
+                    imageUrl: thumbUrl,
+                    width: 52,
+                    height: 52,
+                    fit: BoxFit.cover,
+                    placeholder: (context, url) => Container(
+                      width: 52,
+                      height: 52,
+                      color: ZephyrColors.bgDark,
+                      child: const Icon(
+                        Icons.music_note,
+                        color: ZephyrColors.textDim,
+                        size: 24,
+                      ),
+                    ),
+                    errorWidget: (context, url, error) => Container(
+                      width: 52,
+                      height: 52,
+                      color: ZephyrColors.bgDark,
+                      child: const Icon(
+                        Icons.music_note,
+                        color: ZephyrColors.textDim,
+                        size: 24,
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 52,
+                    height: 52,
+                    color: ZephyrColors.bgDark,
+                    child: Icon(
+                      isLocal ? Icons.folder_rounded : Icons.music_note,
+                      color: isLocal ? Colors.tealAccent : ZephyrColors.textDim,
+                      size: 24,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 14),
+
+          // Details
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        c.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    if (isLocal)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.tealAccent.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Colors.tealAccent.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_circle_outline_rounded, color: Colors.tealAccent, size: 12),
+                            SizedBox(width: 3),
+                            Text(
+                              'In Library',
+                              style: TextStyle(
+                                color: Colors.tealAccent,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (c.matchScore > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _getScoreColor(c.matchScore).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: _getScoreColor(c.matchScore).withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Text(
+                          '${c.matchScore}% match',
+                          style: TextStyle(
+                            color: _getScoreColor(c.matchScore),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${c.artists.join(', ')} • ${_formatDuration(c.durationSeconds)}',
+                  style: const TextStyle(
+                    color: ZephyrColors.textDim,
+                    fontSize: 12,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    if (isLocal)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: Colors.tealAccent.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.sd_storage_rounded, color: Colors.tealAccent, size: 12),
+                            SizedBox(width: 3),
+                            Text(
+                              'Local Audio (No Download)',
+                              style: TextStyle(
+                                color: Colors.tealAccent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (isOMV)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.purple.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: Colors.purpleAccent.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.videocam_rounded, color: Colors.purpleAccent, size: 12),
+                            SizedBox(width: 4),
+                            Text(
+                              'Official Video (OMV)',
+                              style: TextStyle(
+                                color: Colors.purpleAccent,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        margin: const EdgeInsets.only(right: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF06B6D4).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.audiotrack_rounded, color: Color(0xFF06B6D4), size: 12),
+                            const SizedBox(width: 3),
+                            Text(
+                              c.provider != null ? '${c.provider!.toUpperCase()} Track' : 'Audio Track (ATV)',
+                              style: const TextStyle(
+                                color: Color(0xFF06B6D4),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ...c.matchReasons.map((reason) {
+                      final isFeat = reason == 'feat_variant';
+                      final isMismatch = reason == 'version_marker_mismatch';
+                      final color = isFeat
+                          ? Colors.tealAccent
+                          : (isMismatch ? Colors.orangeAccent : ZephyrColors.textDim);
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                          border: isFeat || isMismatch
+                              ? Border.all(color: color.withValues(alpha: 0.3))
+                              : null,
+                        ),
+                        child: Text(
+                          _formatReason(reason),
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 10,
+                            fontWeight: isFeat || isMismatch ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+
+          // Select Button
+          ElevatedButton.icon(
+            onPressed: (_submittingVideoId != null || isSelectionDisabled)
+                ? null
+                : () => _selectCandidate(c),
+            icon: isSubmitting
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(ZephyrColors.bgDark),
+                    ),
+                  )
+                : const Icon(Icons.check_rounded, size: 15),
+            label: Text(
+              isSubmitting
+                  ? (isLocal ? 'Linking...' : 'Selecting...')
+                  : (isLocal ? 'Link' : 'Select'),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isLocal ? Colors.tealAccent : ZephyrColors.primary,
+              foregroundColor: ZephyrColors.bgDark,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              elevation: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _selectCandidate(ResolutionCandidate candidate) async {
+    final activeResId = _resolutionId ?? widget.exception.resolutionId;
+    debugPrint(
+      '🎯 [ResolutionModal] User selected candidate: id="${candidate.videoId}", '
+      'title="${candidate.title}", provider="${candidate.provider}", '
+      'isLocal=${candidate.isLocal}, resolutionId="$activeResId", '
+      'isImport=${widget.isImportResolution}',
+    );
+
     setState(() {
       _submittingVideoId = candidate.videoId;
       _errorMessage = null;
     });
 
     try {
-      final activeResId = _resolutionId ?? widget.exception.resolutionId;
       if (widget.isImportResolution && activeResId != null) {
         await ZephyrApi().selectImportResolution(
           activeResId,
@@ -352,6 +693,39 @@ class _ResolutionCandidateModalState
     } catch (_) {}
     if (mounted) {
       Navigator.of(context).pop(false);
+    }
+  }
+
+  Future<void> _skipSong() async {
+    final activeResId = _resolutionId ?? widget.exception.resolutionId;
+    if (activeResId == null) {
+      Navigator.of(context).pop(false);
+      return;
+    }
+
+    setState(() {
+      _isSkipping = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await ZephyrApi().skipImportResolution(activeResId);
+      if (mounted) {
+        ZephyrToast.show(context, 'Track skipped from import');
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        final errStr = e.toString().toLowerCase();
+        if (errStr.contains('422')) {
+          Navigator.of(context).pop(true);
+          return;
+        }
+        setState(() {
+          _isSkipping = false;
+          _errorMessage = 'Failed to skip song: $e';
+        });
+      }
     }
   }
 
@@ -627,18 +1001,7 @@ class _ResolutionCandidateModalState
                   const SizedBox(height: 14),
                 ],
 
-                const Text(
-                  'CANDIDATES',
-                  style: TextStyle(
-                    color: ZephyrColors.textDim,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0,
-                  ),
-                ),
-                const SizedBox(height: 10),
-
-                // Candidates List
+                // Candidates / Local Matches List
                 Expanded(
                   child: _isLoadingCandidates
                       ? const Center(
@@ -646,7 +1009,7 @@ class _ResolutionCandidateModalState
                             color: ZephyrColors.primary,
                           ),
                         )
-                      : _candidates.isEmpty
+                      : (_candidates.isEmpty && _localMatches.isEmpty)
                       ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -678,334 +1041,86 @@ class _ResolutionCandidateModalState
                             ],
                           ),
                         )
-                      : ListView.separated(
+                      : ListView(
                           shrinkWrap: true,
-                          itemCount: _candidates.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(height: 10),
-                          itemBuilder: (context, index) {
-                            final c = _candidates[index];
-                            final isSubmitting =
-                                _submittingVideoId == c.videoId;
-                            final isOMV = c.videoType == 'OMV';
-
-                            return Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: ZephyrColors.bgLight.withValues(
-                                  alpha: 0.25,
-                                ),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: isOMV
-                                      ? Colors.purple.withValues(alpha: 0.3)
-                                      : Colors.white.withValues(alpha: 0.08),
-                                ),
-                              ),
-                              child: Row(
+                          children: [
+                            // ── 1. Local Matches Section ("Already in your library") ──
+                            if (_localMatches.isNotEmpty) ...[
+                              Row(
                                 children: [
-                                  // Candidate Thumbnail
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child:
-                                        c.thumbnail != null &&
-                                            c.thumbnail!.isNotEmpty
-                                        ? CachedNetworkImage(
-                                            imageUrl: c.thumbnail!,
-                                            width: 52,
-                                            height: 52,
-                                            fit: BoxFit.cover,
-                                            placeholder: (context, url) =>
-                                                Container(
-                                                  width: 52,
-                                                  height: 52,
-                                                  color: ZephyrColors.bgDark,
-                                                  child: const Icon(
-                                                    Icons.music_note,
-                                                    color: ZephyrColors.textDim,
-                                                    size: 24,
-                                                  ),
-                                                ),
-                                            errorWidget:
-                                                (
-                                                  context,
-                                                  url,
-                                                  error,
-                                                ) => Container(
-                                                  width: 52,
-                                                  height: 52,
-                                                  color: ZephyrColors.bgDark,
-                                                  child: const Icon(
-                                                    Icons.music_note,
-                                                    color: ZephyrColors.textDim,
-                                                    size: 24,
-                                                  ),
-                                                ),
-                                          )
-                                        : Container(
-                                            width: 52,
-                                            height: 52,
-                                            color: ZephyrColors.bgDark,
-                                            child: const Icon(
-                                              Icons.music_note,
-                                              color: ZephyrColors.textDim,
-                                              size: 24,
-                                            ),
-                                          ),
+                                  const Icon(
+                                    Icons.library_music_rounded,
+                                    size: 14,
+                                    color: Colors.tealAccent,
                                   ),
-                                  const SizedBox(width: 14),
-
-                                  // Details
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                c.title,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.w600,
-                                                  fontSize: 14,
-                                                ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            // Match score chip
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 6,
-                                                    vertical: 2,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: _getScoreColor(
-                                                  c.matchScore,
-                                                ).withValues(alpha: 0.15),
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                                border: Border.all(
-                                                  color: _getScoreColor(
-                                                    c.matchScore,
-                                                  ).withValues(alpha: 0.4),
-                                                ),
-                                              ),
-                                              child: Text(
-                                                '${c.matchScore}% match',
-                                                style: TextStyle(
-                                                  color: _getScoreColor(
-                                                    c.matchScore,
-                                                  ),
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '${c.artists.join(', ')} • ${_formatDuration(c.durationSeconds)}',
-                                          style: const TextStyle(
-                                            color: ZephyrColors.textDim,
-                                            fontSize: 12,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Wrap(
-                                          spacing: 6,
-                                          runSpacing: 4,
-                                          children: [
-                                            // Video Type Badge
-                                            if (isOMV)
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 6,
-                                                      vertical: 2,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.purple
-                                                      .withValues(alpha: 0.2),
-                                                  borderRadius:
-                                                      BorderRadius.circular(4),
-                                                  border: Border.all(
-                                                    color: Colors.purpleAccent
-                                                        .withValues(alpha: 0.4),
-                                                  ),
-                                                ),
-                                                child: const Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Icon(
-                                                      Icons.videocam_rounded,
-                                                      color:
-                                                          Colors.purpleAccent,
-                                                      size: 12,
-                                                    ),
-                                                    SizedBox(width: 4),
-                                                    Text(
-                                                      'Official Video (OMV)',
-                                                      style: TextStyle(
-                                                        color:
-                                                            Colors.purpleAccent,
-                                                        fontSize: 10.5,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              )
-                                            else
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 6,
-                                                      vertical: 1.5,
-                                                    ),
-                                                margin: const EdgeInsets.only(
-                                                  right: 6,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(
-                                                    0xFF06B6D4,
-                                                  ).withValues(alpha: 0.15),
-                                                  borderRadius:
-                                                      BorderRadius.circular(4),
-                                                ),
-                                                child: const Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Icon(
-                                                      Icons.audiotrack_rounded,
-                                                      color: Color(0xFF06B6D4),
-                                                      size: 12,
-                                                    ),
-                                                    SizedBox(width: 3),
-                                                    Text(
-                                                      'Audio Track (ATV)',
-                                                      style: TextStyle(
-                                                        color: Color(
-                                                          0xFF06B6D4,
-                                                        ),
-                                                        fontSize: 10,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ...c.matchReasons.map((reason) {
-                                              final isFeat =
-                                                  reason == 'feat_variant';
-                                              final isMismatch =
-                                                  reason ==
-                                                  'version_marker_mismatch';
-                                              final color = isFeat
-                                                  ? Colors.tealAccent
-                                                  : (isMismatch
-                                                        ? Colors.orangeAccent
-                                                        : ZephyrColors.textDim);
-                                              return Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 6,
-                                                      vertical: 2,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: color.withValues(
-                                                    alpha: 0.12,
-                                                  ),
-                                                  borderRadius:
-                                                      BorderRadius.circular(4),
-                                                  border: isFeat || isMismatch
-                                                      ? Border.all(
-                                                          color: color
-                                                              .withValues(
-                                                                alpha: 0.3,
-                                                              ),
-                                                        )
-                                                      : null,
-                                                ),
-                                                child: Text(
-                                                  _formatReason(reason),
-                                                  style: TextStyle(
-                                                    color: color,
-                                                    fontSize: 10,
-                                                    fontWeight:
-                                                        isFeat || isMismatch
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              );
-                                            }),
-                                          ],
-                                        ),
-                                      ],
+                                  const SizedBox(width: 6),
+                                  const Text(
+                                    'ALREADY IN YOUR LIBRARY',
+                                    style: TextStyle(
+                                      color: Colors.tealAccent,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 1.0,
                                     ),
                                   ),
-                                  const SizedBox(width: 12),
-
-                                  // Select Button
-                                  ElevatedButton.icon(
-                                    onPressed:
-                                        (_submittingVideoId != null ||
-                                            isSelectionDisabled)
-                                        ? null
-                                        : () => _selectCandidate(c),
-                                    icon: isSubmitting
-                                        ? const SizedBox(
-                                            width: 14,
-                                            height: 14,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                    ZephyrColors.bgDark,
-                                                  ),
-                                            ),
-                                          )
-                                        : const Icon(
-                                            Icons.check_rounded,
-                                            size: 15,
-                                            color: ZephyrColors.bgDark,
-                                          ),
-                                    label: Text(
-                                      isSubmitting ? 'Selecting...' : 'Select',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: ZephyrColors.bgDark,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 0.3,
-                                      ),
-                                    ),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: ZephyrColors.primary,
-                                      foregroundColor: ZephyrColors.bgDark,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                        vertical: 8,
-                                      ),
-                                      shape: const StadiumBorder(),
-                                      elevation: 0,
+                                  const Spacer(),
+                                  Text(
+                                    '${_localMatches.length} match${_localMatches.length > 1 ? 'es' : ''}',
+                                    style: TextStyle(
+                                      color: Colors.tealAccent.withValues(alpha: 0.7),
+                                      fontSize: 11,
                                     ),
                                   ),
                                 ],
                               ),
-                            );
-                          },
+                              const SizedBox(height: 10),
+                              ..._localMatches.map((c) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _buildCandidateCard(
+                                      c,
+                                      isLocal: true,
+                                      isSelectionDisabled: isSelectionDisabled,
+                                    ),
+                                  )),
+                              const SizedBox(height: 14),
+                            ],
+
+                            // ── 2. Provider Candidates Section ──
+                            if (_candidates.isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  Text(
+                                    _provider != null
+                                        ? '${_provider!.toUpperCase()} RESULTS'
+                                        : 'ONLINE CANDIDATES',
+                                    style: const TextStyle(
+                                      color: ZephyrColors.textDim,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 1.0,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    '${_candidates.length} result${_candidates.length > 1 ? 's' : ''}',
+                                    style: const TextStyle(
+                                      color: ZephyrColors.textDim,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              ..._candidates.map((c) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 10),
+                                    child: _buildCandidateCard(
+                                      c,
+                                      isLocal: false,
+                                      isSelectionDisabled: isSelectionDisabled,
+                                    ),
+                                  )),
+                            ],
+                          ],
                         ),
                 ),
                 const SizedBox(height: 20),
@@ -1046,8 +1161,52 @@ class _ResolutionCandidateModalState
                           ),
                           const Spacer(),
                         ],
+                        if (widget.isImportResolution) ...[
+                          OutlinedButton.icon(
+                            onPressed: (_submittingVideoId != null ||
+                                    _isSkipping ||
+                                    _isLoadingCandidates)
+                                ? null
+                                : _skipSong,
+                            icon: _isSkipping
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(
+                                        Colors.redAccent,
+                                      ),
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.skip_next_rounded,
+                                    size: 16,
+                                    color: Colors.redAccent,
+                                  ),
+                            label: Text(
+                              _isSkipping ? 'Skipping...' : 'Skip Song',
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Colors.redAccent),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                        ],
                         TextButton(
-                          onPressed: _submittingVideoId != null
+                          onPressed: _submittingVideoId != null || _isSkipping
                               ? null
                               : _cancel,
                           style: TextButton.styleFrom(

@@ -634,50 +634,77 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           );
           state = state.copyWith(currentTrack: updatedTrack);
 
-          // Post-download: fetch rich metadata (lyrics, album art, local path) now that DB row exists
+          // Post-download: fetch rich metadata (lyrics, album art, local path) and start stream
           if (isCompleted) {
             _api
                 .getTrackMetadata(trackId)
-                .then((fullMeta) {
+                .then((fullMeta) async {
                   if (state.currentTrack != null &&
                       _isSameTrack(state.currentTrack!.videoId, trackId)) {
-                    state = state.copyWith(
-                      currentTrack: state.currentTrack!.copyWith(
-                        title: fullMeta.title != 'Unknown Track'
-                            ? fullMeta.title
-                            : state.currentTrack!.title,
-                        artists: fullMeta.artists.isNotEmpty
-                            ? fullMeta.artists
-                            : state.currentTrack!.artists,
-                        artistsIds: fullMeta.artistsIds.isNotEmpty
-                            ? fullMeta.artistsIds
-                            : state.currentTrack!.artistsIds,
-                        album: fullMeta.album ?? state.currentTrack!.album,
-                        albumId:
-                            fullMeta.albumId ?? state.currentTrack!.albumId,
-                        duration:
-                            (fullMeta.duration != null &&
-                                fullMeta.duration! > Duration.zero)
-                            ? fullMeta.duration
-                            : state.currentTrack!.duration,
-                        coverUrl:
-                            fullMeta.coverUrl ?? state.currentTrack!.coverUrl,
-                        localPath: fullMeta.localPath,
-                        localCoverPath: fullMeta.localCoverPath,
-                        lyricsText: fullMeta.lyricsText,
-                        lyricsLrc: fullMeta.lyricsLrc,
-                        downloadStatus: 'completed',
-                        isDownloaded: true,
-                      ),
+                    final enrichedTrack = state.currentTrack!.copyWith(
+                      title: fullMeta.title != 'Unknown Track'
+                          ? fullMeta.title
+                          : state.currentTrack!.title,
+                      artists: fullMeta.artists.isNotEmpty
+                          ? fullMeta.artists
+                          : state.currentTrack!.artists,
+                      artistsIds: fullMeta.artistsIds.isNotEmpty
+                          ? fullMeta.artistsIds
+                          : state.currentTrack!.artistsIds,
+                      album: fullMeta.album ?? state.currentTrack!.album,
+                      albumId:
+                          fullMeta.albumId ?? state.currentTrack!.albumId,
+                      duration:
+                          (fullMeta.duration != null &&
+                              fullMeta.duration! > Duration.zero)
+                          ? fullMeta.duration
+                          : state.currentTrack!.duration,
+                      coverUrl:
+                          fullMeta.coverUrl ?? state.currentTrack!.coverUrl,
+                      localPath: fullMeta.localPath,
+                      localCoverPath: fullMeta.localCoverPath,
+                      lyricsText: fullMeta.lyricsText,
+                      lyricsLrc: fullMeta.lyricsLrc,
+                      downloadStatus: 'completed',
+                      isDownloaded: true,
                     );
+                    state = state.copyWith(currentTrack: enrichedTrack);
                     _api.notifyLyricsReady(state.currentTrack!.videoId);
                     _api.notifyLyricsReady(trackId);
+
+                    // If waiting for stream or stalled at 0:00, initiate playback now that download is complete
+                    if (state.isPlayerDevice &&
+                        (state.isLoading ||
+                            !_hasLocalAudioSource ||
+                            (zephyrAudioHandler != null &&
+                                (!zephyrAudioHandler!.player.playing ||
+                                    zephyrAudioHandler!.player.position ==
+                                        Duration.zero)))) {
+                      debugPrint(
+                        '⚡ [PlayerProvider] Track $trackId download completed on server! Requesting stream...',
+                      );
+                      await playTrack(
+                        enrichedTrack,
+                        state.queue,
+                        immediate: true,
+                      );
+                    }
                   }
                 })
-                .catchError((e) {
+                .catchError((e) async {
                   debugPrint(
                     'Error enriching track metadata after download: $e',
                   );
+                  if (state.isPlayerDevice &&
+                      state.currentTrack != null &&
+                      _isSameTrack(state.currentTrack!.videoId, trackId) &&
+                      (state.isLoading || !_hasLocalAudioSource)) {
+                    await playTrack(
+                      updatedTrack,
+                      state.queue,
+                      immediate: true,
+                    );
+                  }
                 });
           }
         }
@@ -1191,37 +1218,9 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       _lastKnownServerPlaying = serverPlaying;
     }
 
-    // C. Seek position changed via remote command.
-    // Calculate the server's effective projected position using position_updated_at.
-    // If the local engine is actively playing, compare against the projected position
-    // so background snapshots with a static base posMs do not false-trigger seeks back to 0:00.
-    int effectiveServerPosMs = posMs;
-    if (serverPlaying && posUpdatedAt != null) {
-      final nowUtc = DateTime.now().toUtc();
-      final elapsedMs = nowUtc.difference(posUpdatedAt).inMilliseconds;
-      final maxDurMs = (snapshot['duration_ms'] as num?)?.toInt() ??
-          state.currentTrack?.duration?.inMilliseconds ??
-          0;
-      final rawProjected = posMs + elapsedMs;
-      effectiveServerPosMs = maxDurMs > 0
-          ? rawProjected.clamp(0, maxDurMs)
-          : (rawProjected < 0 ? 0 : rawProjected);
-    }
-
-    final diffMs = (effectiveServerPosMs - state.position.inMilliseconds).abs();
-    if (!suppressOwnerPlayback && !_hasLocalAudioSource && diffMs > 5000) {
-      state = state.copyWith(position: Duration(milliseconds: effectiveServerPosMs));
-    } else if (!suppressOwnerPlayback && _hasLocalAudioSource && diffMs > 5000) {
-      final newPos = Duration(milliseconds: effectiveServerPosMs);
-      try {
-        if (zephyrAudioHandler != null) {
-          await zephyrAudioHandler!.seek(newPos);
-        }
-      } catch (_) {}
-      try {
-        await _audioPlayer.seek(newPos);
-      } catch (_) {}
-      state = state.copyWith(position: newPos);
+    // C. Re-anchor position for devices without active local audio source
+    if (!_hasLocalAudioSource && !suppressOwnerPlayback) {
+      state = state.copyWith(position: Duration(milliseconds: posMs));
     }
   }
 

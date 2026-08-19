@@ -175,7 +175,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                             _buildArtworkCard(isMobile: true),
                             const SizedBox(width: 16),
                             Expanded(
-                              child: _buildHeaderDetails(username, rawFavorites, isMobile: true),
+                              child: _buildHeaderDetails(username, isMobile: true, totalCount: libraryState.effectiveFavoritesCount),
                             ),
                           ],
                         )
@@ -186,7 +186,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                             _buildArtworkCard(isMobile: false),
                             const SizedBox(width: 24),
                             Expanded(
-                              child: _buildHeaderDetails(username, rawFavorites, isMobile: false),
+                              child: _buildHeaderDetails(username, isMobile: false, totalCount: libraryState.effectiveFavoritesCount),
                             ),
                           ],
                         ),
@@ -469,7 +469,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     );
   }
 
-  Widget _buildHeaderDetails(String username, List<Track> favorites, {required bool isMobile}) {
+  Widget _buildHeaderDetails(String username, {required bool isMobile, required int totalCount}) {
+    final countLabel = '$totalCount ${totalCount == 1 ? 'song' : 'songs'}';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.center,
@@ -507,7 +509,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
               style: const TextStyle(color: ZephyrColors.text, fontWeight: FontWeight.bold, fontSize: 13),
             ),
             Text(
-              ' • ${favorites.length} songs',
+              ' • $countLabel',
               style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
             ),
           ],

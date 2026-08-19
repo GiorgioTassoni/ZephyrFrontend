@@ -172,10 +172,11 @@ class HomeScreen extends ConsumerWidget {
     final items = <Widget>[];
 
     // 1. Favorites card
+    final favCount = state.effectiveFavoritesCount;
     items.add(
       _QuickCard(
         title: 'Favorites',
-        subtitle: '${state.favorites.length} ${state.favorites.length == 1 ? 'song' : 'songs'}',
+        subtitle: '$favCount ${favCount == 1 ? 'song' : 'songs'}',
         iconWidget: Container(
           color: ZephyrColors.primary.withValues(alpha: 0.2),
           child: const Icon(Icons.favorite, color: ZephyrColors.primary, size: 24),

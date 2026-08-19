@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
@@ -50,25 +52,70 @@ class AuthState {
 
 class AuthNotifier extends Notifier<AuthState> {
   final ZephyrApi _api = ZephyrApi();
+  Timer? _refreshTimer;
 
   @override
   AuthState build() {
-    print("[AuthNotifier] build() initialized.");
     // Clear initially. Will only be bound when a session is actively authenticated.
     _api.onUnauthorized = null;
     _api.onTokenRefreshed = (newToken) {
-      print("[AuthNotifier] onTokenRefreshed: Token updated reactively.");
       state = state.copyWith(token: newToken);
+      _scheduleProactiveRefresh(newToken);
     };
     Future.microtask(() => tryAutoLogin());
     return AuthState(isLoading: true);
   }
 
+  void _scheduleProactiveRefresh(String? token) {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    if (token == null || token.isEmpty) return;
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return;
+      final normalized = base64Url.normalize(parts[1]);
+      final payload = jsonDecode(utf8.decode(base64Url.decode(normalized)));
+      final exp = payload['exp'];
+      if (exp is num) {
+        final expDate = DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000, isUtc: true);
+        final nowUtc = DateTime.now().toUtc();
+        // Refresh 2 minutes before expiration (or immediately if less than 2 mins left)
+        final refreshDate = expDate.subtract(const Duration(minutes: 2));
+        final diff = refreshDate.difference(nowUtc);
+        final waitDuration = diff.isNegative ? Duration.zero : diff;
+        _refreshTimer = Timer(waitDuration, () async {
+          final success = await _api.refreshToken();
+          if (success && state.isAuthenticated) {
+            _scheduleProactiveRefresh(_api.token);
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  bool _isTokenExpired(String? token, {int bufferSeconds = 60}) {
+    if (token == null || token.isEmpty) return true;
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+      final normalized = base64Url.normalize(parts[1]);
+      final payload = jsonDecode(utf8.decode(base64Url.decode(normalized)));
+      final exp = payload['exp'];
+      if (exp is num) {
+        final expDate = DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000, isUtc: true);
+        final nowUtc = DateTime.now().toUtc();
+        return nowUtc.add(Duration(seconds: bufferSeconds)).isAfter(expDate);
+      }
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
   /// On startup: restore the stored access token.
-  /// If it's expired, the Dio interceptor will silently refresh it using
-  /// the stored refresh token on the first API call.
+  /// If it's expired, proactively refresh it using the refresh token
+  /// BEFORE rendering views or making regular API requests.
   Future<void> tryAutoLogin() async {
-    print("[AuthNotifier] tryAutoLogin() started.");
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('zephyr_auth_token');
     final username = prefs.getString('zephyr_username');
@@ -77,28 +124,34 @@ class AuthNotifier extends Notifier<AuthState> {
     final isApproved = prefs.getBool('zephyr_is_approved') ?? false;
 
     if (token != null && isApproved) {
-      print("[AuthNotifier] Cached token found: $token");
-      // Restore tokens into the API singleton so the interceptor can use them
       final refreshToken = prefs.getString('zephyr_refresh_token');
       if (refreshToken != null) {
-        await _api.setTokens(
-            accessToken: token, refreshToken: refreshToken);
+        await _api.setTokens(accessToken: token, refreshToken: refreshToken);
+      }
+
+      // Check if access token is already expired from a previous session
+      if (_isTokenExpired(token) && refreshToken != null) {
+        final refreshed = await _api.refreshToken();
+        if (!refreshed) {
+          state = AuthState(isLoading: false);
+          return;
+        }
       }
 
       // Validate with a lightweight call; the interceptor auto-refreshes if needed
       try {
-        print("[AuthNotifier] Validating cached token against /api/favorites...");
         await _api.getFavorites();
 
         // Bind callback on successful session validation
         _api.onUnauthorized = () {
-          print("[AuthNotifier] onUnauthorized callback triggered via tryAutoLogin session.");
           forceLogout('New session detected, disconnected');
         };
 
-        print("[AuthNotifier] Cached token valid. Auto-login successful.");
+        final effectiveToken = _api.token ?? token;
+        _scheduleProactiveRefresh(effectiveToken);
+
         state = AuthState(
-          token: _api.token ?? token,
+          token: effectiveToken,
           username: username,
           role: role,
           isApproved: isApproved,
@@ -106,19 +159,14 @@ class AuthNotifier extends Notifier<AuthState> {
         );
         return;
       } catch (e) {
-        print("[AuthNotifier] Validating cached token failed: $e");
         // Token + refresh both invalid — fall through to unauthenticated
       }
-    } else {
-      print("[AuthNotifier] No cached session tokens found.");
     }
 
-    print("[AuthNotifier] tryAutoLogin completed: unauthenticated.");
     state = AuthState(isLoading: false);
   }
 
   Future<bool> login(String username, String password) async {
-    print("[AuthNotifier] login() initiated for user: $username");
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final res = await _api.login(username, password);
@@ -130,7 +178,6 @@ class AuthNotifier extends Notifier<AuthState> {
       final mustChangePwd = res['must_change_password'] == true;
 
       if (!approved) {
-        print("[AuthNotifier] Login failed: pending admin approval.");
         state = AuthState(
           errorMessage: 'Your account is pending admin approval.',
           isLoading: false,
@@ -147,11 +194,13 @@ class AuthNotifier extends Notifier<AuthState> {
 
       // Bind callback on successful login
       _api.onUnauthorized = () {
-        print("[AuthNotifier] onUnauthorized callback triggered via login session.");
         forceLogout('New session detected, disconnected');
       };
 
-      print("[AuthNotifier] Login successful. mustChangePassword=$mustChangePwd");
+      if (token != null) {
+        _scheduleProactiveRefresh(token as String);
+      }
+
       state = AuthState(
         token: token,
         username: username,
@@ -162,7 +211,6 @@ class AuthNotifier extends Notifier<AuthState> {
       );
       return true;
     } catch (e) {
-      print("[AuthNotifier] Login failed with exception: $e");
       state = AuthState(
         errorMessage: e.toString(),
         isLoading: false,
@@ -172,16 +220,13 @@ class AuthNotifier extends Notifier<AuthState> {
   }
 
   Future<String?> register(String username, String password) async {
-    print("[AuthNotifier] register() initiated for user: $username");
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final res = await _api.register(username, password);
       state = AuthState(isLoading: false);
-      print("[AuthNotifier] Registration API success.");
       return res['message'] ??
           'Registration successful. Wait for admin approval.';
     } catch (e) {
-      print("[AuthNotifier] Registration failed: $e");
       state = AuthState(
         errorMessage: e.toString(),
         isLoading: false,
@@ -191,16 +236,15 @@ class AuthNotifier extends Notifier<AuthState> {
   }
 
   Future<void> logout() async {
-    print("[AuthNotifier] Manual logout() initiated.");
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
     _api.onUnauthorized = null; // Unbind callback so pending requests cannot trigger forceLogout
     state = state.copyWith(isLoading: true);
 
     // Tell the server to invalidate the refresh token (best-effort)
-    print("[AuthNotifier] Calling API logout...");
     await _api.logout();
 
     // Clear all local session data
-    print("[AuthNotifier] Wiping local session preferences...");
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('zephyr_auth_token');
     await prefs.remove('zephyr_refresh_token');
@@ -209,17 +253,16 @@ class AuthNotifier extends Notifier<AuthState> {
     await prefs.remove('zephyr_role');
     await prefs.remove('zephyr_is_approved');
 
-    print("[AuthNotifier] Manual logout completed. Error message is null.");
     state = AuthState(isLoading: false);
   }
 
   Future<void> forceLogout(String message) async {
-    print("[AuthNotifier] forceLogout() initiated with message: $message");
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
     _api.onUnauthorized = null; // Unbind callback to avoid duplicate triggers
     state = state.copyWith(isLoading: true);
 
     // Clear tokens locally without calling the API logout (session is already invalid)
-    print("[AuthNotifier] Clearing local authentication tokens...");
     await _api.clearAuth();
 
     final prefs = await SharedPreferences.getInstance();
@@ -229,7 +272,6 @@ class AuthNotifier extends Notifier<AuthState> {
     await prefs.remove('zephyr_role');
     await prefs.remove('zephyr_is_approved');
 
-    print("[AuthNotifier] Force logout completed. State updated with warning.");
     state = AuthState(
       errorMessage: message,
       isLoading: false,

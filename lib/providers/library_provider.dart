@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
@@ -14,6 +15,7 @@ class LibraryState {
   final List<Track> downloadedTracks;
   final List<Playlist> playlists;
   final List<Track> favorites;
+  final int? totalFavoritesCount;
   final List<HistoryEntry> history;
   final bool isLoading;
   final bool favoritesLoading;
@@ -23,10 +25,13 @@ class LibraryState {
 
   static const int _pageSize = 50;
 
+  int get effectiveFavoritesCount => totalFavoritesCount ?? favorites.length;
+
   LibraryState({
     this.downloadedTracks = const [],
     this.playlists = const [],
     this.favorites = const [],
+    this.totalFavoritesCount,
     this.history = const [],
     this.isLoading = false,
     this.favoritesLoading = false,
@@ -39,6 +44,7 @@ class LibraryState {
     List<Track>? downloadedTracks,
     List<Playlist>? playlists,
     List<Track>? favorites,
+    int? totalFavoritesCount,
     List<HistoryEntry>? history,
     bool? isLoading,
     bool? favoritesLoading,
@@ -50,6 +56,7 @@ class LibraryState {
       downloadedTracks: downloadedTracks ?? this.downloadedTracks,
       playlists: playlists ?? this.playlists,
       favorites: favorites ?? this.favorites,
+      totalFavoritesCount: totalFavoritesCount ?? this.totalFavoritesCount,
       history: history ?? this.history,
       isLoading: isLoading ?? this.isLoading,
       favoritesLoading: favoritesLoading ?? this.favoritesLoading,
@@ -98,8 +105,11 @@ class LibraryNotifier extends Notifier<LibraryState> {
       } catch (_) {}
 
       List<Track> favorites = state.favorites;
+      int? totalFavs = state.totalFavoritesCount;
       try {
-        favorites = await _api.getFavorites(offset: 0);
+        final firstPage = await _api.getFavoritesWithCount(offset: 0);
+        favorites = List.from(firstPage.tracks);
+        totalFavs = firstPage.totalCount;
       } catch (_) {}
 
       List<HistoryEntry> history = state.history;
@@ -147,6 +157,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
         downloadedTracks: tracks,
         playlists: playlists,
         favorites: favorites,
+        totalFavoritesCount: totalFavs,
         history: enrichedHistoryList,
         isLoading: false,
       );
@@ -172,8 +183,8 @@ class LibraryNotifier extends Notifier<LibraryState> {
         }
       }
     } catch (e, stackTrace) {
-      print("Library load error: $e");
-      print(stackTrace);
+      debugPrint("Library load error: $e");
+      debugPrint(stackTrace.toString());
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Failed to load library: $e',
@@ -216,8 +227,8 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   /// Resets pagination and fetches the first page of favorites (offset=0).
-  /// Call this whenever the user opens the Favorites tab so the list is
-  /// always accurate and correctly ordered (newest first from the server).
+  /// Reads X-Total-Count directly from the response header to know the exact
+  /// total count without needing to load all pages upfront.
   Future<void> loadFavorites() async {
     state = state.copyWith(
       favoritesLoading: true,
@@ -225,12 +236,16 @@ class LibraryNotifier extends Notifier<LibraryState> {
       favoritesOffset: 0,
     );
     try {
-      final page = await _api.getFavorites(offset: 0);
+      final firstPage = await _api.getFavoritesWithCount(offset: 0);
+      final List<Track> tracks = List.from(firstPage.tracks);
+      final bool hasMore = tracks.length < firstPage.totalCount && firstPage.tracks.length >= LibraryState._pageSize;
+
       state = state.copyWith(
-        favorites: page,
+        favorites: tracks,
+        totalFavoritesCount: firstPage.totalCount,
+        favoritesOffset: tracks.length,
+        hasMoreFavorites: hasMore,
         favoritesLoading: false,
-        favoritesOffset: page.length,
-        hasMoreFavorites: page.length >= LibraryState._pageSize,
       );
     } catch (e) {
       state = state.copyWith(
@@ -246,13 +261,14 @@ class LibraryNotifier extends Notifier<LibraryState> {
     if (state.favoritesLoading || !state.hasMoreFavorites) return;
     state = state.copyWith(favoritesLoading: true);
     try {
-      final page = await _api.getFavorites(offset: state.favoritesOffset);
-      final merged = [...state.favorites, ...page];
+      final page = await _api.getFavoritesWithCount(offset: state.favoritesOffset);
+      final merged = [...state.favorites, ...page.tracks];
       state = state.copyWith(
         favorites: merged,
+        totalFavoritesCount: page.totalCount,
         favoritesLoading: false,
         favoritesOffset: merged.length,
-        hasMoreFavorites: page.length >= LibraryState._pageSize,
+        hasMoreFavorites: merged.length < page.totalCount && page.tracks.length >= LibraryState._pageSize,
       );
     } catch (e) {
       state = state.copyWith(
@@ -282,7 +298,12 @@ class LibraryNotifier extends Notifier<LibraryState> {
     } else {
       currentFavorites.insert(0, track);
     }
-    state = state.copyWith(favorites: currentFavorites);
+    final currentTotal = state.totalFavoritesCount ?? state.favorites.length;
+    final newTotal = isFav ? (currentTotal > 0 ? currentTotal - 1 : 0) : currentTotal + 1;
+    state = state.copyWith(
+      favorites: currentFavorites,
+      totalFavoritesCount: newTotal,
+    );
 
     try {
       if (isFav) {

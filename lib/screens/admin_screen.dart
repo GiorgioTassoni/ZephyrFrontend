@@ -21,6 +21,7 @@ class _AdminScreenState extends State<AdminScreen> {
   Map<String, dynamic>? _cookiesState;
   bool _isLoading = true;
   bool _isRetryingDownloads = false;
+  bool _isSyncingCovers = false;
   bool _isUploadingCookies = false;
   String? _cookiesUploadError;
   String? _error;
@@ -211,9 +212,78 @@ class _AdminScreenState extends State<AdminScreen> {
         SnackBar(content: Text('Failed to retry downloads: $e'), backgroundColor: ZephyrColors.error),
       );
     } finally {
-      if (mounted) setState(() {
-        _isRetryingDownloads = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isRetryingDownloads = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _syncCovers() async {
+    setState(() {
+      _isSyncingCovers = true;
+    });
+    try {
+      final res = await _api.syncCovers();
+      if (!mounted) return;
+      final scanned = res['scanned'] ?? 0;
+      final uploaded = res['uploaded'] ?? 0;
+      final alreadyPresent = res['already_present'] ?? 0;
+      final missingLocal = res['missing_local_files'] ?? 0;
+      final failed = res['failed'] ?? 0;
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: ZephyrColors.bgCard,
+          title: const Row(
+            children: [
+              Icon(Icons.cloud_sync, color: ZephyrColors.primary),
+              SizedBox(width: 10),
+              Text('Cover Sync Completed', style: TextStyle(color: ZephyrColors.text)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('• Scanned local covers: $scanned', style: const TextStyle(color: ZephyrColors.text)),
+              const SizedBox(height: 6),
+              Text('• Uploaded to S3: $uploaded', style: const TextStyle(color: ZephyrColors.success, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Text('• Already present on S3: $alreadyPresent', style: const TextStyle(color: ZephyrColors.textDim)),
+              if (missingLocal > 0) ...[
+                const SizedBox(height: 6),
+                Text('• Missing local files: $missingLocal', style: const TextStyle(color: ZephyrColors.warning)),
+              ],
+              if (failed > 0) ...[
+                const SizedBox(height: 6),
+                Text('• Failed uploads: $failed', style: const TextStyle(color: ZephyrColors.error, fontWeight: FontWeight.bold)),
+              ],
+            ],
+          ),
+          actions: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: ZephyrColors.primary),
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        ),
+      );
+      _fetchAdminData();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Cover sync failed: $e'), backgroundColor: ZephyrColors.error),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSyncingCovers = false;
+        });
+      }
     }
   }
 
@@ -481,22 +551,44 @@ class _AdminScreenState extends State<AdminScreen> {
                   Text('Cached covers size: ${thumbnailsSize.toStringAsFixed(1)} MB', style: const TextStyle(color: ZephyrColors.textDim)),
                 ],
               ),
-              if (failedTracks > 0)
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: ZephyrColors.error,
-                    foregroundColor: Colors.white,
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: ZephyrColors.primary,
+                      side: const BorderSide(color: ZephyrColors.primary),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    ),
+                    icon: _isSyncingCovers
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(color: ZephyrColors.primary, strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_sync, size: 18),
+                    label: Text(_isSyncingCovers ? 'Syncing Covers...' : 'Sync S3 Covers'),
+                    onPressed: _isSyncingCovers ? null : _syncCovers,
                   ),
-                  icon: _isRetryingDownloads
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh, size: 18),
-                  label: const Text('Retry Failed Downloads'),
-                  onPressed: _isRetryingDownloads ? null : _retryFailedDownloads,
-                ),
+                  if (failedTracks > 0)
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: ZephyrColors.error,
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: _isRetryingDownloads
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh, size: 18),
+                      label: const Text('Retry Failed Downloads'),
+                      onPressed: _isRetryingDownloads ? null : _retryFailedDownloads,
+                    ),
+                ],
+              ),
             ],
           ),
         ],

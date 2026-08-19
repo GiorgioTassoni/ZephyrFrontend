@@ -117,6 +117,10 @@ class ZephyrApi {
 
   /// Rotate the refresh token and mint a new access + refresh pair.
   /// Uses a single-flight Future so concurrent 401s share the same refresh attempt.
+  Future<bool> refreshToken() async {
+    return _tryRefresh();
+  }
+
   Future<bool> _tryRefresh() async {
     if (_refreshToken == null) return false;
     if (_refreshFuture != null) {
@@ -168,6 +172,10 @@ class ZephyrApi {
     String cleanUrl = url.trim();
     if (cleanUrl.endsWith('/')) {
       cleanUrl = cleanUrl.substring(0, cleanUrl.length - 1);
+    }
+    final uri = Uri.tryParse(cleanUrl);
+    if (uri == null || (!uri.isScheme('http') && !uri.isScheme('https'))) {
+      throw ArgumentError('Invalid server URL. Must begin with http:// or https://');
     }
     _baseUrl = cleanUrl;
     _dio.options.baseUrl = _baseUrl;
@@ -338,10 +346,22 @@ class ZephyrApi {
     _proxyServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _proxyPort = _proxyServer!.port;
     _proxyServer!.listen((HttpRequest req) async {
-      final videoId = req.uri.pathSegments.length >= 2
-          ? req.uri.pathSegments.last
-          : '';
-      final backendUrl = Uri.parse('$_baseUrl/api/tracks/stream/$videoId');
+      if (req.uri.pathSegments.length < 2 || req.uri.pathSegments.first != 'stream') {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final rawVideoId = req.uri.pathSegments.last.trim();
+      if (rawVideoId.isEmpty ||
+          rawVideoId.contains('..') ||
+          rawVideoId.contains('/') ||
+          rawVideoId.contains('\\')) {
+        req.response.statusCode = HttpStatus.badRequest;
+        await req.response.close();
+        return;
+      }
+      final safeId = Uri.encodeComponent(rawVideoId);
+      final backendUrl = Uri.parse('$_baseUrl/api/tracks/stream/$safeId');
 
       HttpClient? client;
       try {
@@ -366,8 +386,8 @@ class ZephyrApi {
             backendResp.statusCode,
             errorBody,
           );
-          if (typedError != null && videoId.isNotEmpty) {
-            _proxyStreamErrors[videoId] = typedError;
+          if (typedError != null && rawVideoId.isNotEmpty) {
+            _proxyStreamErrors[rawVideoId] = typedError;
           }
 
           req.response.statusCode = backendResp.statusCode;
@@ -604,6 +624,7 @@ class ZephyrApi {
 
     try {
       int failureCount = 0;
+      bool wasDisconnected = false;
       while (true) {
         if (_token == null) {
           await Future.delayed(const Duration(seconds: 5));
@@ -620,6 +641,7 @@ class ZephyrApi {
           final response = await request.close();
           if (response.statusCode == 401) {
             await response.drain<void>().catchError((_) {});
+            wasDisconnected = true;
             final refreshed = await _tryRefresh();
             if (!refreshed) {
               onUnauthorized?.call();
@@ -630,10 +652,22 @@ class ZephyrApi {
 
           if (response.statusCode != 200) {
             await response.drain<void>().catchError((_) {});
+            wasDisconnected = true;
             failureCount++;
             final delaySeconds = (3 * failureCount).clamp(3, 30);
             await Future.delayed(Duration(seconds: delaySeconds));
             continue;
+          }
+
+          // Re-fetch player state after reconnecting to sync state
+          if (wasDisconnected) {
+            wasDisconnected = false;
+            try {
+              final s = await getPlayerState();
+              s['_event_type'] = 'state';
+              s['_sse_initial'] = true;
+              yield s;
+            } catch (_) {}
           }
 
           failureCount = 0;
@@ -649,6 +683,13 @@ class ZephyrApi {
               if (dataBuffer.isNotEmpty) {
                 final rawData = dataBuffer.toString();
                 dataBuffer.clear();
+                if (eventType == 'sse_closed') {
+                  // Server requested SSE connection closure (e.g. connection_limit)
+                  // Treat as a temporary connection event, backoff, and reconnect.
+                  wasDisconnected = true;
+                  failureCount++;
+                  break;
+                }
                 if (eventType == 'state' ||
                     eventType == 'message' ||
                     eventType == 'devices' ||
@@ -680,6 +721,7 @@ class ZephyrApi {
           }
         } catch (e) {
           debugPrint('SSE connection notice: $e');
+          wasDisconnected = true;
           failureCount++;
         }
 
@@ -872,6 +914,26 @@ class ZephyrApi {
       );
       final List list = response.data;
       return list.map((e) => Track.fromJson(e)).toList();
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<({List<Track> tracks, int totalCount})> getFavoritesWithCount({
+    int offset = 0,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '/api/favorites',
+        queryParameters: {'offset': offset},
+      );
+      final List list = response.data is List ? response.data : [];
+      final tracks = list.map((e) => Track.fromJson(e)).toList();
+      final totalHeader = response.headers.value('x-total-count');
+      final totalCount = totalHeader != null
+          ? (int.tryParse(totalHeader) ?? tracks.length)
+          : tracks.length;
+      return (tracks: tracks, totalCount: totalCount);
     } on DioException catch (e) {
       throw _handleDioError(e);
     }
@@ -1296,6 +1358,41 @@ class ZephyrApi {
   Future<void> deleteTrack(String trackId) async {
     try {
       await _dio.delete('/api/admin/tracks/$trackId');
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  /// Bulk delete tracks (admin).
+  /// Returns breakdown: {status, requested, deleted, deleted_track_ids, skipped, not_found, removed_local_assets, removed_remote_assets, cleanup_errors}
+  Future<Map<String, dynamic>> deleteTracksBulk({
+    required List<String> trackIds,
+    bool deleteRemoteAssets = true,
+  }) async {
+    try {
+      final response = await _dio.delete(
+        '/api/admin/tracks',
+        data: {
+          'track_ids': trackIds,
+          'delete_remote_assets': deleteRemoteAssets,
+        },
+      );
+      return response.data is Map<String, dynamic>
+          ? response.data
+          : Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  /// Retries uploads for existing local covers missing from S3 (admin maintenance).
+  /// Returns breakdown: {status, scanned, uploaded, already_present, missing_local_files, failed}
+  Future<Map<String, dynamic>> syncCovers() async {
+    try {
+      final response = await _dio.post('/api/admin/covers/sync');
+      return response.data is Map<String, dynamic>
+          ? response.data
+          : Map<String, dynamic>.from(response.data as Map);
     } on DioException catch (e) {
       throw _handleDioError(e);
     }

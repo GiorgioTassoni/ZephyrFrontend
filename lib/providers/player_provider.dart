@@ -87,6 +87,8 @@ class ZephyrPlayerState {
   final String myDeviceId;
   final String myDeviceName;
   final List<Map<String, dynamic>> connectedDevices;
+  final DateTime? positionUpdatedAt;
+  final int? basePositionMs;
 
   ZephyrPlayerState({
     this.currentTrack,
@@ -110,6 +112,8 @@ class ZephyrPlayerState {
     this.myDeviceId = '',
     this.myDeviceName = '',
     this.connectedDevices = const [],
+    this.positionUpdatedAt,
+    this.basePositionMs,
   });
 
   bool get canGoPrevious => historyCount > 0 || currentIndex > 0;
@@ -121,6 +125,22 @@ class ZephyrPlayerState {
       return currentTrack!.duration!;
     }
     return Duration.zero;
+  }
+
+  /// Calculates the projected position using position_updated_at anchor
+  Duration get projectedPosition {
+    if (isPlayerDevice) return position;
+    if (!isPlaying || positionUpdatedAt == null) return position;
+
+    final nowUtc = DateTime.now().toUtc();
+    final elapsedMs = nowUtc.difference(positionUpdatedAt!).inMilliseconds;
+    final baseMs = basePositionMs ?? position.inMilliseconds;
+    final effectiveMs = baseMs + elapsedMs;
+    final maxMs = effectiveDuration.inMilliseconds;
+    if (maxMs > 0) {
+      return Duration(milliseconds: effectiveMs.clamp(0, maxMs));
+    }
+    return Duration(milliseconds: effectiveMs < 0 ? 0 : effectiveMs);
   }
 
   ZephyrPlayerState copyWith({
@@ -146,6 +166,8 @@ class ZephyrPlayerState {
     String? myDeviceId,
     String? myDeviceName,
     List<Map<String, dynamic>>? connectedDevices,
+    DateTime? positionUpdatedAt,
+    int? basePositionMs,
   }) {
     return ZephyrPlayerState(
       currentTrack: nullTrack == true
@@ -171,6 +193,8 @@ class ZephyrPlayerState {
       myDeviceId: myDeviceId ?? this.myDeviceId,
       myDeviceName: myDeviceName ?? this.myDeviceName,
       connectedDevices: connectedDevices ?? this.connectedDevices,
+      positionUpdatedAt: positionUpdatedAt ?? this.positionUpdatedAt,
+      basePositionMs: basePositionMs ?? this.basePositionMs,
     );
   }
 }
@@ -756,6 +780,13 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         (snapshot['position_ms'] as num?)?.toInt() ??
         state.position.inMilliseconds;
     final String? curTrackId = snapshot['current_track_id']?.toString();
+
+    DateTime? posUpdatedAt;
+    if (snapshot['position_updated_at'] != null) {
+      posUpdatedAt =
+          DateTime.tryParse(snapshot['position_updated_at'].toString())?.toUtc();
+    }
+
     final bool suppressPersistedStartupPlayback =
         _suppressPersistedStartupPlayback;
     if (suppressPersistedStartupPlayback &&
@@ -942,6 +973,21 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       final bool remoteTrackChanged =
           currentTrack != null &&
           !_isSameTrack(currentTrack.videoId, state.currentTrack?.videoId);
+
+      // Compute initial projected position for the non-player device
+      int projectedMs = posMs;
+      if (serverPlaying && posUpdatedAt != null) {
+        final nowUtc = DateTime.now().toUtc();
+        final elapsedMs = nowUtc.difference(posUpdatedAt).inMilliseconds;
+        final maxDurMs = (snapshot['duration_ms'] as num?)?.toInt() ??
+            currentTrack?.duration?.inMilliseconds ??
+            0;
+        final rawProjected = posMs + elapsedMs;
+        projectedMs = maxDurMs > 0
+            ? rawProjected.clamp(0, maxDurMs)
+            : (rawProjected < 0 ? 0 : rawProjected);
+      }
+
       state = state.copyWith(
         activeDeviceId: activeId,
         activeDeviceName: activeName,
@@ -952,8 +998,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         originalQueue: state.isShuffled ? state.originalQueue : queueToUse,
         isPlaying: serverPlaying,
         isLoading: false,
-        position: Duration(milliseconds: posMs),
+        position: Duration(milliseconds: projectedMs),
         duration: remoteTrackChanged ? Duration.zero : null,
+        positionUpdatedAt: posUpdatedAt,
+        basePositionMs: posMs,
       );
 
       // Always hydrate a remote track change. The owner may have created the
@@ -990,7 +1038,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       // the first startup snapshot, keep playback paused by contract; on a
       // later reconnect, reflect the server's playing state without issuing
       // local play/pause/seek commands.
-      position: suppressOwnerPlayback
+      position: (suppressOwnerPlayback && !_hasLocalAudioSource)
           ? Duration(milliseconds: posMs)
           : state.position,
       isPlaying: suppressOwnerPlayback && !isStartup
@@ -1143,12 +1191,28 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       _lastKnownServerPlaying = serverPlaying;
     }
 
-    // C. Seek position changed via remote command. The backend's marked SSE
-    // connect/reconnect snapshot is an anchor, not a seek command; update the
-    // mirrored state above but never move or start a local audio engine here.
-    final diffMs = (posMs - state.position.inMilliseconds).abs();
-    if (!suppressOwnerPlayback && diffMs > 3000) {
-      final newPos = Duration(milliseconds: posMs);
+    // C. Seek position changed via remote command.
+    // Calculate the server's effective projected position using position_updated_at.
+    // If the local engine is actively playing, compare against the projected position
+    // so background snapshots with a static base posMs do not false-trigger seeks back to 0:00.
+    int effectiveServerPosMs = posMs;
+    if (serverPlaying && posUpdatedAt != null) {
+      final nowUtc = DateTime.now().toUtc();
+      final elapsedMs = nowUtc.difference(posUpdatedAt).inMilliseconds;
+      final maxDurMs = (snapshot['duration_ms'] as num?)?.toInt() ??
+          state.currentTrack?.duration?.inMilliseconds ??
+          0;
+      final rawProjected = posMs + elapsedMs;
+      effectiveServerPosMs = maxDurMs > 0
+          ? rawProjected.clamp(0, maxDurMs)
+          : (rawProjected < 0 ? 0 : rawProjected);
+    }
+
+    final diffMs = (effectiveServerPosMs - state.position.inMilliseconds).abs();
+    if (!suppressOwnerPlayback && !_hasLocalAudioSource && diffMs > 5000) {
+      state = state.copyWith(position: Duration(milliseconds: effectiveServerPosMs));
+    } else if (!suppressOwnerPlayback && _hasLocalAudioSource && diffMs > 5000) {
+      final newPos = Duration(milliseconds: effectiveServerPosMs);
       try {
         if (zephyrAudioHandler != null) {
           await zephyrAudioHandler!.seek(newPos);
@@ -1391,7 +1455,6 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   }
 
   void _initStreams() {
-    DateTime? lastHeartbeatTime;
     void updatePos(Duration pos) {
       // Audio callbacks belong only to the local OWNER. When ownership is
       // transferred away, just_audio/audioplayers can emit a final zero
@@ -1406,38 +1469,6 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         return;
       }
       state = state.copyWith(position: pos, isLoading: false);
-
-      final now = DateTime.now();
-      if (state.isPlaying &&
-          state.isPlayerDevice &&
-          (lastHeartbeatTime == null ||
-              now.difference(lastHeartbeatTime!).inSeconds >= 2)) {
-        lastHeartbeatTime = now;
-        _api
-            .updatePlayerState(
-              deviceId: state.myDeviceId,
-              deviceName: state.myDeviceName,
-              positionMs: pos.inMilliseconds,
-              isPlaying: true,
-            )
-            .catchError((error) {
-              if (error is PlayerActiveException) {
-                // A heartbeat conflict is an ownership loss. Changing the
-                // role alone is unsafe: the local stream may continue playing.
-                final wasLocalOwner = state.isPlayerDevice;
-                state = state.copyWith(
-                  isPlayerDevice: false,
-                  activeDeviceId: error.ownerDeviceId,
-                  activeDeviceName: error.ownerDeviceName,
-                  isPlaying: false,
-                );
-                if (wasLocalOwner) {
-                  _stopLocalPlayback();
-                }
-              }
-              return <String, dynamic>{};
-            });
-      }
 
       // Check if we reached at least half of the song to record history
       if (!_hasRecordedCurrentTrack && state.currentTrack != null) {
@@ -1493,11 +1524,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       if (!state.isPlayerDevice &&
           state.isPlaying &&
           state.currentTrack != null) {
-        final newSec = state.position.inSeconds + 1;
-        final maxSec = state.effectiveDuration.inSeconds;
-        if (maxSec == 0 || newSec <= maxSec) {
-          state = state.copyWith(position: Duration(seconds: newSec));
-        }
+        state = state.copyWith(position: state.projectedPosition);
       }
     });
 

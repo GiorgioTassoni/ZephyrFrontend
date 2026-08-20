@@ -1039,8 +1039,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       return;
     }
 
-    // Update queue if new server queue tracks are available
-    if (serverQueueTracks != null && serverQueueTracks.isNotEmpty) {
+    // Update queue if new server queue tracks are available (only in linear mode to avoid overwriting client-side shuffle)
+    if (serverQueueTracks != null && serverQueueTracks.isNotEmpty && !state.isShuffled) {
       final curTrack = state.currentTrack;
       final fullQueue =
           (curTrack != null &&
@@ -1051,7 +1051,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           : serverQueueTracks;
       state = state.copyWith(
         queue: fullQueue,
-        originalQueue: state.isShuffled ? state.originalQueue : fullQueue,
+        originalQueue: fullQueue,
       );
     }
 
@@ -1975,11 +1975,15 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
           final bool isContextQueue =
               (origin != 'search' && origin != 'radio') &&
-              (remaining.isNotEmpty || playQueue.length > 1);
+              (remaining.isNotEmpty || playQueue.length > 1 || state.queue.length > 1);
           final String mode = isContextQueue ? 'context' : 'radio';
 
           if (isContextQueue) {
-            final queueMaps = remaining
+            final List<Track> baseQueue = state.isShuffled
+                ? state.queue.where((t) => !_isSameTrack(t.videoId, finalTrack.videoId)).toList()
+                : remaining;
+
+            final queueMaps = baseQueue
                 .take(50)
                 .map(
                   (t) => {
@@ -2005,7 +2009,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
             );
             final int hCount =
                 (res['history_count'] as num?)?.toInt() ?? state.historyCount;
-            if (res.containsKey('queue') && res['queue'] is List) {
+            if (!state.isShuffled && res.containsKey('queue') && res['queue'] is List) {
               final List serverQueue = res['queue'];
               final List<Track> updatedQueue = serverQueue
                   .map((e) => Track.fromJson(e))
@@ -2014,9 +2018,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
                 final fullQueue = [finalTrack, ...updatedQueue];
                 state = state.copyWith(
                   queue: fullQueue,
-                  originalQueue: state.isShuffled
-                      ? state.originalQueue
-                      : fullQueue,
+                  originalQueue: fullQueue,
                   currentIndex: 0,
                   historyCount: hCount,
                 );

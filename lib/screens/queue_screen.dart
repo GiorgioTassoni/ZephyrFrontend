@@ -6,11 +6,46 @@ import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/artist_links.dart';
 
-class QueueScreen extends ConsumerWidget {
+class QueueScreen extends ConsumerStatefulWidget {
   const QueueScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<QueueScreen> createState() => _QueueScreenState();
+}
+
+class _QueueScreenState extends ConsumerState<QueueScreen> {
+  final ScrollController _scrollController = ScrollController();
+  int _displayedCount = 25;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent - 400) {
+      final playerState = ref.read(playerProvider);
+      final total = playerState.userQueue.length + playerState.queue.length;
+      if (_displayedCount < total) {
+        setState(() {
+          _displayedCount = (_displayedCount + 25).clamp(25, total);
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final playerState = ref.watch(playerProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
 
@@ -21,6 +56,10 @@ class QueueScreen extends ConsumerWidget {
     final baseQueueRemaining = playerState.queue.isEmpty || playerState.currentIndex < 0
         ? <Track>[]
         : playerState.queue.sublist((playerState.currentIndex + 1).clamp(0, playerState.queue.length));
+
+    final visibleUserQueue = userQueue.take(_displayedCount).toList();
+    final remainingCountForBase = (_displayedCount - visibleUserQueue.length).clamp(0, _displayedCount);
+    final visibleBaseQueue = baseQueueRemaining.take(remainingCountForBase).toList();
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
@@ -44,6 +83,7 @@ class QueueScreen extends ConsumerWidget {
           // Scrollable Queue Content
           Expanded(
             child: ListView(
+              controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               children: [
                 // 1. Now Playing Section
@@ -66,9 +106,9 @@ class QueueScreen extends ConsumerWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'Next up',
-                        style: TextStyle(
+                      Text(
+                        'Next up (${userQueue.length})',
+                        style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                           color: ZephyrColors.textDim,
@@ -89,7 +129,7 @@ class QueueScreen extends ConsumerWidget {
                   const SizedBox(height: 8),
                   _buildReorderableList(
                     context,
-                    tracks: userQueue,
+                    tracks: visibleUserQueue,
                     isUserQueue: true,
                     onReorder: playerNotifier.reorderUserQueue,
                     onDelete: playerNotifier.removeFromUserQueue,
@@ -99,22 +139,52 @@ class QueueScreen extends ConsumerWidget {
 
                 // 3. Next In Queue (Base Queue) Section
                 if (baseQueueRemaining.isNotEmpty) ...[
-                  const Text(
-                    'Next in queue',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: ZephyrColors.textDim,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Next in queue (${baseQueueRemaining.length})',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: ZephyrColors.textDim,
+                        ),
+                      ),
+                      if (baseQueueRemaining.length > visibleBaseQueue.length)
+                        Text(
+                          'Showing ${visibleBaseQueue.length} of ${baseQueueRemaining.length}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: ZephyrColors.textDim,
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   _buildReorderableList(
                     context,
-                    tracks: baseQueueRemaining,
+                    tracks: visibleBaseQueue,
                     isUserQueue: false,
                     onReorder: playerNotifier.reorderBaseQueue,
                     onDelete: playerNotifier.removeFromBaseQueue,
                   ),
+                  if (baseQueueRemaining.length > visibleBaseQueue.length) ...[
+                    const SizedBox(height: 16),
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _displayedCount += 50;
+                          });
+                        },
+                        icon: const Icon(Icons.expand_more, size: 18, color: ZephyrColors.primary),
+                        label: Text(
+                          'Load more (${baseQueueRemaining.length - visibleBaseQueue.length} remaining)',
+                          style: const TextStyle(color: ZephyrColors.primary, fontSize: 13),
+                        ),
+                      ),
+                    ),
+                  ],
                 ] else if (userQueue.isEmpty && currentTrack == null) ...[
                   const Center(
                     child: Padding(

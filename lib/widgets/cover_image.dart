@@ -26,7 +26,7 @@ class CoverImage extends ConsumerStatefulWidget {
     this.isDownloaded,
     this.size = 48,
     this.borderRadius = 8,
-    this.debounceDuration = const Duration(milliseconds: 500),
+    this.debounceDuration = const Duration(milliseconds: 700),
   });
 
   @override
@@ -126,12 +126,19 @@ class _CoverImageState extends ConsumerState<CoverImage> {
         url = '$url?v=${Uri.encodeComponent(cleanUpdatedAt)}';
       }
 
+      final String playlistKey = 'playlist_cover_${widget.playlistId}_${cleanUpdatedAt ?? ''}';
+
       return ClipRRect(
         borderRadius: BorderRadius.circular(widget.borderRadius),
         child: CachedNetworkImage(
           imageUrl: url,
+          cacheKey: playlistKey,
           width: widget.size,
           height: widget.size,
+          memCacheWidth: (widget.size * 2).toInt(),
+          memCacheHeight: (widget.size * 2).toInt(),
+          maxWidthDiskCache: 300,
+          maxHeightDiskCache: 300,
           fit: BoxFit.cover,
           fadeInDuration: const Duration(milliseconds: 200),
           httpHeaders: {
@@ -187,12 +194,23 @@ class _CoverImageState extends ConsumerState<CoverImage> {
       headers['Authorization'] = 'Bearer $activeToken';
     }
 
+    final String trackKey = (widget.videoId != null && widget.videoId!.isNotEmpty)
+        ? 'track_cover_${widget.videoId}'
+        : (fallbackVideoId != null && fallbackVideoId.isNotEmpty
+            ? 'track_cover_$fallbackVideoId'
+            : fullUrl.split('?').first);
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(widget.borderRadius),
       child: CachedNetworkImage(
         imageUrl: fullUrl,
+        cacheKey: trackKey,
         width: size,
         height: size,
+        memCacheWidth: (size * 2).toInt(),
+        memCacheHeight: (size * 2).toInt(),
+        maxWidthDiskCache: 300,
+        maxHeightDiskCache: 300,
         fit: BoxFit.cover,
         fadeInDuration: const Duration(milliseconds: 200),
         httpHeaders: headers,

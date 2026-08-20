@@ -17,6 +17,15 @@ class CoverImage extends ConsumerStatefulWidget {
   final double borderRadius;
   final Duration debounceDuration;
 
+  /// Global session cache of already rendered cover keys
+  static final Set<String> _renderedCoverKeys = <String>{};
+
+  static void clearSessionCache() {
+    _renderedCoverKeys.clear();
+  }
+
+  static bool isCoverCached(String key) => _renderedCoverKeys.contains(key);
+
   const CoverImage({
     super.key,
     this.videoId,
@@ -26,7 +35,7 @@ class CoverImage extends ConsumerStatefulWidget {
     this.isDownloaded,
     this.size = 48,
     this.borderRadius = 8,
-    this.debounceDuration = const Duration(milliseconds: 700),
+    this.debounceDuration = const Duration(milliseconds: 300),
   });
 
   @override
@@ -37,10 +46,26 @@ class _CoverImageState extends ConsumerState<CoverImage> {
   bool _isReadyToLoad = false;
   Timer? _debounceTimer;
 
+  String _resolveCacheKey() {
+    if (widget.playlistId != null) {
+      return 'playlist_cover_${widget.playlistId}_${widget.updatedAt ?? ''}';
+    }
+    if (widget.videoId != null && widget.videoId!.isNotEmpty) {
+      return 'track_cover_${widget.videoId}';
+    }
+    if (widget.coverUrl != null && widget.coverUrl!.isNotEmpty) {
+      return widget.coverUrl!.split('?').first;
+    }
+    return '';
+  }
+
   @override
   void initState() {
     super.initState();
-    if (widget.size >= 120 || widget.debounceDuration == Duration.zero) {
+    final key = _resolveCacheKey();
+    if (widget.size >= 120 ||
+        widget.debounceDuration == Duration.zero ||
+        (key.isNotEmpty && CoverImage._renderedCoverKeys.contains(key))) {
       _isReadyToLoad = true;
     } else {
       _startDebounce();
@@ -53,7 +78,10 @@ class _CoverImageState extends ConsumerState<CoverImage> {
     if (oldWidget.coverUrl != widget.coverUrl ||
         oldWidget.videoId != widget.videoId ||
         oldWidget.playlistId != widget.playlistId) {
-      if (widget.size >= 120 || widget.debounceDuration == Duration.zero) {
+      final key = _resolveCacheKey();
+      if (widget.size >= 120 ||
+          widget.debounceDuration == Duration.zero ||
+          (key.isNotEmpty && CoverImage._renderedCoverKeys.contains(key))) {
         _isReadyToLoad = true;
       } else {
         _startDebounce();
@@ -62,10 +90,18 @@ class _CoverImageState extends ConsumerState<CoverImage> {
   }
 
   void _startDebounce() {
+    final key = _resolveCacheKey();
+    if (key.isNotEmpty && CoverImage._renderedCoverKeys.contains(key)) {
+      _isReadyToLoad = true;
+      return;
+    }
     _debounceTimer?.cancel();
     _isReadyToLoad = false;
     _debounceTimer = Timer(widget.debounceDuration, () {
       if (mounted) {
+        if (key.isNotEmpty) {
+          CoverImage._renderedCoverKeys.add(key);
+        }
         setState(() {
           _isReadyToLoad = true;
         });
@@ -128,6 +164,7 @@ class _CoverImageState extends ConsumerState<CoverImage> {
 
       final String playlistKey = 'playlist_cover_${widget.playlistId}_${cleanUpdatedAt ?? ''}';
 
+      final bool isCached = CoverImage.isCoverCached(playlistKey);
       return ClipRRect(
         borderRadius: BorderRadius.circular(widget.borderRadius),
         child: CachedNetworkImage(
@@ -140,7 +177,16 @@ class _CoverImageState extends ConsumerState<CoverImage> {
           maxWidthDiskCache: 300,
           maxHeightDiskCache: 300,
           fit: BoxFit.cover,
-          fadeInDuration: const Duration(milliseconds: 200),
+          fadeInDuration: isCached ? Duration.zero : const Duration(milliseconds: 150),
+          imageBuilder: (context, imageProvider) {
+            CoverImage._renderedCoverKeys.add(playlistKey);
+            return Image(
+              image: imageProvider,
+              fit: BoxFit.cover,
+              width: widget.size,
+              height: widget.size,
+            );
+          },
           httpHeaders: {
             'User-Agent':
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -200,6 +246,8 @@ class _CoverImageState extends ConsumerState<CoverImage> {
             ? 'track_cover_$fallbackVideoId'
             : fullUrl.split('?').first);
 
+    final bool isCached = CoverImage.isCoverCached(trackKey);
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(widget.borderRadius),
       child: CachedNetworkImage(
@@ -210,7 +258,16 @@ class _CoverImageState extends ConsumerState<CoverImage> {
         memCacheWidth: size <= 64 ? (size * 3).toInt() : null,
         memCacheHeight: size <= 64 ? (size * 3).toInt() : null,
         fit: BoxFit.cover,
-        fadeInDuration: const Duration(milliseconds: 200),
+        fadeInDuration: isCached ? Duration.zero : const Duration(milliseconds: 150),
+        imageBuilder: (context, imageProvider) {
+          CoverImage._renderedCoverKeys.add(trackKey);
+          return Image(
+            image: imageProvider,
+            fit: BoxFit.cover,
+            width: size,
+            height: size,
+          );
+        },
         httpHeaders: headers,
         placeholder: (context, url) => placeholder,
         errorWidget: (context, url, error) {

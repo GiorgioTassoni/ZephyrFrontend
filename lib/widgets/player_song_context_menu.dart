@@ -21,7 +21,7 @@ Future<void> showPlayerSongContextMenu(
   final navNotifier = ref.read(navigationProvider.notifier);
   final libraryNotifier = ref.read(libraryProvider.notifier);
   final offlineState = ref.read(offlineDownloadsProvider);
-  final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title);
+  final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title, artists: track.artists);
   final isLocal = offlineState.isDownloaded(track.videoId);
 
   final RelativeRect positionRect = RelativeRect.fromRect(

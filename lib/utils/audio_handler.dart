@@ -114,19 +114,24 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
         break;
     }
 
+    final controls = [
+      MediaControl.skipToPrevious,
+      if (playing) MediaControl.pause else MediaControl.play,
+      MediaControl.skipToNext,
+    ];
+    final compactIndices = controls.isEmpty
+        ? const <int>[]
+        : (controls.length >= 3 ? const [0, 1, 2] : List.generate(controls.length, (i) => i));
+
     playbackState.add(
       PlaybackState(
-        controls: [
-          MediaControl.skipToPrevious,
-          if (playing) MediaControl.pause else MediaControl.play,
-          MediaControl.skipToNext,
-        ],
+        controls: controls,
         systemActions: const {
           MediaAction.seek,
           MediaAction.seekForward,
           MediaAction.seekBackward,
         },
-        androidCompactActionIndices: const [0, 1, 2],
+        androidCompactActionIndices: compactIndices,
         processingState: state,
         playing: playing,
         updatePosition: _player.position,
@@ -213,6 +218,38 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Timer? _stallRecoveryTimer;
+
+  /// Seamlessly prepare media notification and pause current audio in-place without destroying the Foreground Service
+  Future<void> prepareForTrackTransition(Track track, String apiBaseUrl) async {
+    _stallRecoveryTimer?.cancel();
+    _stallRecoveryTimer = null;
+    try {
+      await _player.pause();
+    } catch (_) {}
+    setTrackMediaItem(track, apiBaseUrl);
+    final controls = [
+      MediaControl.skipToPrevious,
+      MediaControl.play,
+      MediaControl.skipToNext,
+    ];
+    playbackState.add(
+      PlaybackState(
+        controls: controls,
+        systemActions: const {
+          MediaAction.seek,
+          MediaAction.seekForward,
+          MediaAction.seekBackward,
+        },
+        androidCompactActionIndices: const [0, 1, 2],
+        processingState: AudioProcessingState.buffering,
+        playing: false,
+        updatePosition: Duration.zero,
+        bufferedPosition: Duration.zero,
+        speed: _player.speed,
+        queueIndex: 0,
+      ),
+    );
+  }
 
   /// Play audio stream URL directly
   Future<void> playUrl(
@@ -312,6 +349,7 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
         processingState: AudioProcessingState.idle,
         playing: false,
         controls: const [],
+        androidCompactActionIndices: const [],
       ),
     );
     try {
@@ -360,8 +398,8 @@ Future<ZephyrAudioHandler?> initAudioService() async {
         androidNotificationChannelName: 'Zephyr Music Playback',
         androidNotificationChannelDescription: 'Zephyr background playback and media controls',
         androidNotificationOngoing: false,
-        androidStopForegroundOnPause: true,
-        androidNotificationIcon: 'drawable/ic_notification',
+        androidStopForegroundOnPause: false,
+        androidNotificationIcon: 'mipmap/launcher_icon',
         androidShowNotificationBadge: true,
       ),
     );

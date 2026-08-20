@@ -617,7 +617,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     // Auto update lyrics highlighted line based on player position
     _updateLyricsScrolling(playerState.position);
 
-    final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title);
+    final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title, artists: track.artists);
     final ambientColor = _getTrackAmbientColor(track);
 
     final isMobile = MediaQuery.of(context).size.width < 700;

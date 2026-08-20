@@ -31,6 +31,13 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   String? _error;
   bool _isReorderingMode = false;
   bool _isCoverHovered = false;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -301,62 +308,35 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
-      body: RefreshIndicator(
-        onRefresh: _fetchPlaylistDetails,
-        color: ZephyrColors.primary,
-        backgroundColor: ZephyrColors.bgCard,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            // Playlist Header and Action Buttons
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 16 : 32,
-                  vertical: isMobile ? 16 : 32,
-                ),
-                child: Column(
-                  crossAxisAlignment: isMobile ? CrossAxisAlignment.center : CrossAxisAlignment.start,
-                  children: [
-                    if (isMobile) ...[
-                      Center(
-                        child: GestureDetector(
-                          onTap: isRemote ? null : _pickAndUploadCover,
-                          child: MouseRegion(
-                            cursor: isRemote ? SystemMouseCursors.basic : SystemMouseCursors.click,
-                            onEnter: (_) => setState(() => _isCoverHovered = !isRemote),
-                            onExit: (_) => setState(() => _isCoverHovered = false),
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                CoverImage(
-                                  coverUrl: _playlist!.coverUrl,
-                                  playlistId: isRemote ? null : _playlist!.id,
-                                  updatedAt: _playlist!.updatedAt,
-                                  size: 180,
-                                  borderRadius: 12,
-                                ),
-                                if (_isCoverHovered && !isRemote)
-                                  Container(
-                                    width: 180,
-                                    height: 180,
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.4),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: const Center(
-                                      child: Icon(
-                                        Icons.camera_alt_outlined,
-                                        color: Colors.white,
-                                        size: 40,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
+      body: CustomScrollView(
+        key: PageStorageKey('playlist_detail_scroll_view_${widget.playlistId}'),
+        controller: _scrollController,
+        cacheExtent: 1500,
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          // Playlist Header and Action Buttons
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 16 : 32,
+                vertical: isMobile ? 16 : 32,
+              ),
+              child: Column(
+                crossAxisAlignment: isMobile ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+                children: [
+                  if (isMobile) ...[
+                    Center(
+                      child: GestureDetector(
+                        onTap: isRemote ? null : _pickAndUploadCover,
+                        child: CoverImage(
+                          coverUrl: _playlist!.coverUrl,
+                          playlistId: isRemote ? null : _playlist!.id,
+                          updatedAt: _playlist!.updatedAt,
+                          size: 180,
+                          borderRadius: 12,
                         ),
                       ),
+                    ),
                       const SizedBox(height: 16),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -821,13 +801,22 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
             else
               SliverPadding(
                 padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 32),
-                sliver: SliverList.builder(
-                  itemCount: tracks.length,
-                  itemBuilder: (context, index) {
-                    final track = tracks[index];
-                    return Row(
-                      children: [
-                        if (!isMobile) ...[
+                sliver: SliverFixedExtentList(
+                  itemExtent: 64.0,
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final track = tracks[index];
+                      if (isMobile) {
+                        return TrackTile(
+                          key: ValueKey(track.videoId),
+                          track: track,
+                          queue: tracks,
+                          onRemoveFromPlaylist: () => _removeTrack(track.videoId),
+                        );
+                      }
+                      return Row(
+                        key: ValueKey(track.videoId),
+                        children: [
                           const SizedBox(width: 32),
                           SizedBox(
                             width: 32,
@@ -836,23 +825,24 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                               style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
                             ),
                           ),
-                        ],
-                        Expanded(
-                          child: TrackTile(
-                            track: track,
-                            queue: tracks,
-                            onRemoveFromPlaylist: () => _removeTrack(track.videoId),
+                          Expanded(
+                            child: TrackTile(
+                              key: ValueKey('track_tile_${track.videoId}'),
+                              track: track,
+                              queue: tracks,
+                              onRemoveFromPlaylist: () => _removeTrack(track.videoId),
+                            ),
                           ),
-                        ),
-                      ],
-                    );
-                  },
+                        ],
+                      );
+                    },
+                    childCount: tracks.length,
+                  ),
                 ),
               ),
             const SliverPadding(padding: EdgeInsets.only(bottom: 120)),
           ],
         ),
-      ),
     );
   }
 }

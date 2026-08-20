@@ -27,7 +27,7 @@ class MiniPlayer extends ConsumerWidget {
         : 0.0;
 
     return Dismissible(
-      key: ValueKey('mini_player_${track.videoId}'),
+      key: const ValueKey('persistent_mini_player'),
       direction: DismissDirection.horizontal,
       confirmDismiss: (direction) async {
         if (direction == DismissDirection.endToStart) {

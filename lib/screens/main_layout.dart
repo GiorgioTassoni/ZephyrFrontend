@@ -85,9 +85,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     final navState = ref.watch(navigationProvider);
     final navNotifier = ref.read(navigationProvider.notifier);
     final authState = ref.watch(authProvider);
-    final playerState = ref.watch(playerProvider);
-    final playerNotifier = ref.read(playerProvider.notifier);
     final libraryState = ref.watch(libraryProvider);
+    final playerNotifier = ref.read(playerProvider.notifier);
 
     // Resolve main screen widget
     Widget currentScreenWidget;
@@ -227,10 +226,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
 
         // L key -> Toggle Like / Favorite for current track
         if (key == LogicalKeyboardKey.keyL) {
-          if (playerState.currentTrack != null) {
+          final curTrack = ref.read(playerProvider).currentTrack;
+          if (curTrack != null) {
             ref
                 .read(libraryProvider.notifier)
-                .toggleFavorite(playerState.currentTrack!);
+                .toggleFavorite(curTrack);
           }
           return KeyEventResult.handled;
         }
@@ -426,7 +426,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   Container(height: 1, color: ZephyrColors.bgLight),
 
                   // Bottom Player Bar
-                  _buildPlayerBar(context, ref, playerState, playerNotifier),
+                  _PlayerBarWidget(parentState: this),
                 ],
               ),
             ),
@@ -869,7 +869,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         !state.isPlayerDevice && ownerName != null && ownerName.isNotEmpty;
     ref.watch(libraryProvider);
     final libraryNotifier = ref.read(libraryProvider.notifier);
-    final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title);
+    final isFav = libraryNotifier.isFavorite(track.videoId, title: track.title, artists: track.artists);
     final navState = ref.watch(navigationProvider);
     final navNotifier = ref.read(navigationProvider.notifier);
 
@@ -2182,5 +2182,17 @@ class _TopSearchBarState extends ConsumerState<_TopSearchBar> {
         ),
       ),
     );
+  }
+}
+
+class _PlayerBarWidget extends ConsumerWidget {
+  final _MainLayoutState parentState;
+  const _PlayerBarWidget({required this.parentState});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final playerState = ref.watch(playerProvider);
+    final playerNotifier = ref.read(playerProvider.notifier);
+    return parentState._buildPlayerBar(context, ref, playerState, playerNotifier);
   }
 }

@@ -47,11 +47,14 @@ class TrackTile extends ConsumerStatefulWidget {
 class _TrackTileState extends ConsumerState<TrackTile> {
   @override
   Widget build(BuildContext context) {
-    final playerState = ref.watch(playerProvider);
+    final isCurrent = ref.watch(
+      playerProvider.select(
+        (s) => s.currentTrack?.videoId == widget.track.videoId,
+      ),
+    );
     final playerNotifier = ref.read(playerProvider.notifier);
     final libraryNotifier = ref.read(libraryProvider.notifier);
-    final isCurrent = playerState.currentTrack?.videoId == widget.track.videoId;
-    final isFav = libraryNotifier.isFavorite(widget.track.videoId, title: widget.track.title);
+    final isFav = libraryNotifier.isFavorite(widget.track.videoId, title: widget.track.title, artists: widget.track.artists);
 
     final tile = GestureDetector(
       onSecondaryTapDown: (details) {
@@ -437,7 +440,7 @@ class _TrackTileState extends ConsumerState<TrackTile> {
   void _handleMenuSelection(BuildContext context, WidgetRef ref, String value) {
     if (value == 'toggle_favorite') {
       ref.read(libraryProvider.notifier).toggleFavorite(widget.track);
-      final isNowFav = ref.read(libraryProvider.notifier).isFavorite(widget.track.videoId, title: widget.track.title);
+      final isNowFav = ref.read(libraryProvider.notifier).isFavorite(widget.track.videoId, title: widget.track.title, artists: widget.track.artists);
       ZephyrToast.show(context, isNowFav ? 'Added to favorites' : 'Removed from favorites');
     } else if (value == 'add_to_queue') {
       ref.read(playerProvider.notifier).addToQueue(widget.track);
@@ -619,7 +622,7 @@ class _TrackTileState extends ConsumerState<TrackTile> {
 
     final List<PopupMenuEntry<String>> items = [];
 
-    final isFav = ref.read(libraryProvider.notifier).isFavorite(widget.track.videoId, title: widget.track.title);
+    final isFav = ref.read(libraryProvider.notifier).isFavorite(widget.track.videoId, title: widget.track.title, artists: widget.track.artists);
     items.add(
       PopupMenuItem(
         value: 'toggle_favorite',

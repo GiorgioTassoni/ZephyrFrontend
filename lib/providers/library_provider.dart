@@ -210,11 +210,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
         .trim();
   }
 
-  bool isFavorite(String videoId, {String? title}) {
+  bool isFavorite(String videoId, {String? title, List<String>? artists}) {
     if (videoId.trim().isEmpty) return false;
     final targetRaw = videoId.trim();
     final targetClean = targetRaw.replaceAll('dz_', '');
-    final targetTitleClean = title != null && title.trim().isNotEmpty ? _cleanTitle(title) : null;
 
     return state.favorites.any((t) {
       final tVideoId = t.videoId.trim();
@@ -222,9 +221,16 @@ class LibraryNotifier extends Notifier<LibraryState> {
       final tVideoIdClean = tVideoId.replaceAll('dz_', '');
       if (targetClean.isNotEmpty && tVideoIdClean == targetClean) return true;
 
-      if (targetTitleClean != null && targetTitleClean.isNotEmpty) {
+      if (title != null && title.trim().isNotEmpty && artists != null && artists.isNotEmpty) {
         final tTitleClean = _cleanTitle(t.title);
-        if (tTitleClean.isNotEmpty && tTitleClean == targetTitleClean) return true;
+        final targetTitleClean = _cleanTitle(title);
+        if (tTitleClean.isNotEmpty && tTitleClean == targetTitleClean) {
+          final tArtist = t.artists.isNotEmpty ? t.artists.first.toLowerCase().trim() : '';
+          final targetArtist = artists.first.toLowerCase().trim();
+          if (tArtist.isNotEmpty && targetArtist.isNotEmpty && (tArtist == targetArtist || tArtist.contains(targetArtist) || targetArtist.contains(tArtist))) {
+            return true;
+          }
+        }
       }
       return false;
     });
@@ -289,7 +295,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   Future<void> toggleFavorite(Track track) async {
     final videoId = track.videoId;
-    final isFav = isFavorite(videoId, title: track.title);
+    final isFav = isFavorite(videoId, title: track.title, artists: track.artists);
 
     // Optimistic UI update — insert at index 0 so newly-added tracks appear
     // at the top of the list (matching server order: newest first).
@@ -297,15 +303,24 @@ class LibraryNotifier extends Notifier<LibraryState> {
     if (isFav) {
       final targetCleanId = videoId.replaceAll('dz_', '').trim();
       final targetCleanTitle = _cleanTitle(track.title);
+      final targetArtist = track.artists.isNotEmpty ? track.artists.first.toLowerCase().trim() : '';
       currentFavorites.removeWhere((t) {
         if (t.videoId == videoId) return true;
         final tCleanId = t.videoId.replaceAll('dz_', '').trim();
         if (targetCleanId.isNotEmpty && tCleanId == targetCleanId) return true;
-        if (targetCleanTitle.isNotEmpty && _cleanTitle(t.title) == targetCleanTitle) return true;
+        if (targetCleanTitle.isNotEmpty && _cleanTitle(t.title) == targetCleanTitle) {
+          final tArtist = t.artists.isNotEmpty ? t.artists.first.toLowerCase().trim() : '';
+          if (tArtist.isNotEmpty && targetArtist.isNotEmpty && (tArtist == targetArtist || tArtist.contains(targetArtist) || targetArtist.contains(tArtist))) {
+            return true;
+          }
+        }
         return false;
       });
     } else {
-      currentFavorites.insert(0, track);
+      currentFavorites.insert(
+        0,
+        track.copyWith(favoritedAt: DateTime.now().toUtc()),
+      );
     }
     final currentTotal = state.totalFavoritesCount ?? state.favorites.length;
     final newTotal = isFav ? (currentTotal > 0 ? currentTotal - 1 : 0) : currentTotal + 1;
@@ -320,12 +335,14 @@ class LibraryNotifier extends Notifier<LibraryState> {
       } else {
         await _api.addFavorite(videoId);
       }
+      // Reload authoritative favorites list with metadata from backend
+      await loadFavorites();
       // Reload downloaded tracks, since adding to favorites might auto-download
       final updatedTracks = await _api.getDownloadedTracks();
       state = state.copyWith(downloadedTracks: updatedTracks);
     } catch (e) {
       // Revert on error
-      loadLibrary();
+      await loadFavorites();
     }
   }
 
@@ -577,13 +594,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }) async {
     try {
       if (scope == 'favorites') {
-        final allFavs = await _api.getFavorites();
-        state = state.copyWith(
-          favorites: allFavs,
-          totalFavoritesCount: allFavs.length,
-          favoritesOffset: allFavs.length,
-          hasMoreFavorites: false,
-        );
+        await loadFavorites();
       } else if (scope == 'playlists') {
         final playlists = await _api.getPlaylists();
         state = state.copyWith(playlists: playlists);

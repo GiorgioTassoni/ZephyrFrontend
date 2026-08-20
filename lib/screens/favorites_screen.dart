@@ -166,7 +166,19 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     }
   }
 
+  List<Track>? _cachedProcessedFavorites;
+  List<Track>? _lastRawFavorites;
+  String? _lastSortBy;
+  String? _lastSearchQuery;
+
   List<Track> _getProcessedFavorites(List<Track> rawFavorites) {
+    if (_cachedProcessedFavorites != null &&
+        identical(rawFavorites, _lastRawFavorites) &&
+        _sortBy == _lastSortBy &&
+        _searchQuery == _lastSearchQuery) {
+      return _cachedProcessedFavorites!;
+    }
+
     List<Track> list = List.from(rawFavorites);
 
     if (_searchQuery.trim().isNotEmpty) {
@@ -191,15 +203,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         break;
       case 'date_added':
       default:
-        list.sort((a, b) {
-          if (a.favoritedAt != null && b.favoritedAt != null) {
-            return b.favoritedAt!.compareTo(a.favoritedAt!);
-          }
-          return 0; // retain server array order
-        });
+        // Canonical array order is already newest-first from the server + local unshift
         break;
     }
 
+    _lastRawFavorites = rawFavorites;
+    _lastSortBy = _sortBy;
+    _lastSearchQuery = _searchQuery;
+    _cachedProcessedFavorites = list;
     return list;
   }
 
@@ -208,7 +219,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     final libraryState = ref.watch(libraryProvider);
     final authState = ref.watch(authProvider);
     final navNotifier = ref.read(navigationProvider.notifier);
-    final playerState = ref.watch(playerProvider);
+    final isShuffled = ref.watch(playerProvider.select((s) => s.isShuffled));
     final playerNotifier = ref.read(playerProvider.notifier);
 
     final rawFavorites = libraryState.favorites;
@@ -293,6 +304,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                       child: CustomScrollView(
                         key: const PageStorageKey('favorites_custom_scroll_view'),
                         controller: _scrollController,
+                        cacheExtent: 1500,
                         slivers: [
                   // Hero Banner Header
                   SliverToBoxAdapter(
@@ -415,13 +427,13 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                       IconButton(
                         icon: Icon(
                           Icons.shuffle,
-                          color: playerState.isShuffled ? ZephyrColors.primary : ZephyrColors.textDim,
+                          color: isShuffled ? ZephyrColors.primary : ZephyrColors.textDim,
                           size: 26,
                         ),
                         tooltip: 'Shuffle Play',
                         onPressed: processedFavorites.isNotEmpty
                             ? () {
-                                if (!playerState.isShuffled) {
+                                if (!isShuffled) {
                                   playerNotifier.toggleShuffle();
                                 }
                                 playerNotifier.playTrack(

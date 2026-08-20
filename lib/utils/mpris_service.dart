@@ -187,7 +187,7 @@ class LinuxMprisService {
     required VoidCallback onPrevious,
     ValueChanged<double>? onSetVolume,
   }) async {
-    if (kIsWeb || _isInitialized) return;
+    if (kIsWeb || !Platform.isLinux || _isInitialized) return;
     try {
       _client = DBusClient.session();
       _player = ZephyrMprisPlayer()

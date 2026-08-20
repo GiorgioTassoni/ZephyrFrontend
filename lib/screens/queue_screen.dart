@@ -6,46 +6,13 @@ import '../theme/colors.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/artist_links.dart';
 
-class QueueScreen extends ConsumerStatefulWidget {
+class QueueScreen extends ConsumerWidget {
   const QueueScreen({super.key});
 
-  @override
-  ConsumerState<QueueScreen> createState() => _QueueScreenState();
-}
-
-class _QueueScreenState extends ConsumerState<QueueScreen> {
-  final ScrollController _scrollController = ScrollController();
-  int _displayedCount = 25;
+  static const int maxVisibleNormalQueue = 50;
 
   @override
-  void initState() {
-    super.initState();
-    _scrollController.addListener(_onScroll);
-  }
-
-  @override
-  void dispose() {
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _onScroll() {
-    if (_scrollController.hasClients &&
-        _scrollController.position.pixels >=
-            _scrollController.position.maxScrollExtent - 400) {
-      final playerState = ref.read(playerProvider);
-      final total = playerState.userQueue.length + playerState.queue.length;
-      if (_displayedCount < total) {
-        setState(() {
-          _displayedCount = (_displayedCount + 25).clamp(25, total);
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final playerState = ref.watch(playerProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
 
@@ -57,9 +24,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
         ? <Track>[]
         : playerState.queue.sublist((playerState.currentIndex + 1).clamp(0, playerState.queue.length));
 
-    final visibleUserQueue = userQueue.take(_displayedCount).toList();
-    final remainingCountForBase = (_displayedCount - visibleUserQueue.length).clamp(0, _displayedCount);
-    final visibleBaseQueue = baseQueueRemaining.take(remainingCountForBase).toList();
+    // Show only the next 50 tracks coming next visually (keeps all tracks in code)
+    final visibleBaseQueue = baseQueueRemaining.take(maxVisibleNormalQueue).toList();
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
@@ -83,7 +49,6 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
           // Scrollable Queue Content
           Expanded(
             child: ListView(
-              controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               children: [
                 // 1. Now Playing Section
@@ -129,7 +94,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                   const SizedBox(height: 8),
                   _buildReorderableList(
                     context,
-                    tracks: visibleUserQueue,
+                    tracks: userQueue,
                     isUserQueue: true,
                     onReorder: playerNotifier.reorderUserQueue,
                     onDelete: playerNotifier.removeFromUserQueue,
@@ -152,7 +117,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                       ),
                       if (baseQueueRemaining.length > visibleBaseQueue.length)
                         Text(
-                          'Showing ${visibleBaseQueue.length} of ${baseQueueRemaining.length}',
+                          'Showing next ${visibleBaseQueue.length} of ${baseQueueRemaining.length}',
                           style: const TextStyle(
                             fontSize: 12,
                             color: ZephyrColors.textDim,
@@ -171,16 +136,22 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                   if (baseQueueRemaining.length > visibleBaseQueue.length) ...[
                     const SizedBox(height: 16),
                     Center(
-                      child: TextButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _displayedCount += 50;
-                          });
-                        },
-                        icon: const Icon(Icons.expand_more, size: 18, color: ZephyrColors.primary),
-                        label: Text(
-                          'Load more (${baseQueueRemaining.length - visibleBaseQueue.length} remaining)',
-                          style: const TextStyle(color: ZephyrColors.primary, fontSize: 13),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: ZephyrColors.bgCard,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: ZephyrColors.bgLight.withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: Text(
+                          '+ ${baseQueueRemaining.length - visibleBaseQueue.length} more tracks in queue',
+                          style: const TextStyle(
+                            color: ZephyrColors.textDim,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ),

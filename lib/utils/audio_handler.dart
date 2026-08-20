@@ -3,8 +3,11 @@ import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:just_audio/just_audio.dart';
 import '../models/models.dart';
+import '../api/zephyr_api.dart';
+import 'offline_storage.dart';
 
 /// Global AudioHandler instance for Zephyr Music Player.
 ZephyrAudioHandler? zephyrAudioHandler;
@@ -17,6 +20,8 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
   VoidCallback? onSkipNext;
   VoidCallback? onSkipPrevious;
   VoidCallback? onTogglePlayPause;
+  bool Function()? isPlaybackOwner;
+  bool _wasPlayingBeforeInterruption = false;
 
   ZephyrAudioHandler() {
     _initAudioSession();
@@ -33,32 +38,40 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
 
       // Auto-pause when headphones/bluetooth disconnect
       session.becomingNoisyEventStream.listen((_) {
-        pause();
+        final isOwner = isPlaybackOwner?.call() ?? true;
+        if (isOwner) {
+          pause();
+        }
       });
 
       // Handle phone calls & audio focus interruptions
       session.interruptionEventStream.listen((event) {
+        final isOwner = isPlaybackOwner?.call() ?? true;
         if (event.begin) {
+          _wasPlayingBeforeInterruption = _player.playing && isOwner;
           switch (event.type) {
             case AudioInterruptionType.duck:
-              _player.setVolume(0.2);
+              if (isOwner) _player.setVolume(0.2);
               break;
             case AudioInterruptionType.pause:
             case AudioInterruptionType.unknown:
-              pause();
+              if (isOwner) pause();
               break;
           }
         } else {
           switch (event.type) {
             case AudioInterruptionType.duck:
-              _player.setVolume(1.0);
+              if (isOwner) _player.setVolume(1.0);
               break;
             case AudioInterruptionType.pause:
-              play();
+              if (_wasPlayingBeforeInterruption && isOwner) {
+                play();
+              }
               break;
             case AudioInterruptionType.unknown:
               break;
           }
+          _wasPlayingBeforeInterruption = false;
         }
       });
     } catch (e) {
@@ -107,7 +120,6 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
           MediaControl.skipToPrevious,
           if (playing) MediaControl.pause else MediaControl.play,
           MediaControl.skipToNext,
-          MediaControl.stop,
         ],
         systemActions: const {
           MediaAction.seek,
@@ -127,10 +139,27 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Update metadata broadcasted to Android MediaSession & iOS MPNowPlayingInfoCenter
   void setTrackMediaItem(Track track, String apiBaseUrl) {
-    String art = track.coverUrl ?? '';
-    if (art.isNotEmpty && art.startsWith('/')) {
-      art = '$apiBaseUrl$art';
-    }
+    Uri? finalArtUri;
+    String artUrl = '';
+
+    try {
+      final localCover = OfflineStorageService().getCoverFilePath(track.videoId);
+      if (localCover != null && File(localCover).existsSync()) {
+        finalArtUri = Uri.file(localCover);
+      } else {
+        String art = track.coverUrl ?? '';
+        if (art.isNotEmpty && art.startsWith('/')) {
+          art = '$apiBaseUrl$art';
+        } else if (art.isEmpty && track.videoId.isNotEmpty) {
+          art = '$apiBaseUrl/api/tracks/cover/${track.videoId}';
+        }
+        artUrl = art;
+
+        if (artUrl.startsWith('file://')) {
+          finalArtUri = Uri.tryParse(artUrl);
+        }
+      }
+    } catch (_) {}
 
     final item = MediaItem(
       id: track.videoId,
@@ -138,11 +167,49 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
       title: track.title,
       artist: track.artists.join(', '),
       duration: track.duration,
-      artUri: art.isNotEmpty ? Uri.tryParse(art) : null,
+      artUri: finalArtUri,
       extras: {'videoId': track.videoId, 'artists': track.artists},
     );
 
-    mediaItem.add(item);
+    try {
+      mediaItem.add(item);
+    } catch (e) {
+      debugPrint('ZephyrAudioHandler mediaItem notice: $e');
+    }
+
+    // Resolve cover image from cache manager or fetch to local file for Android notification
+    if (artUrl.isNotEmpty && (finalArtUri == null || finalArtUri.scheme != 'file')) {
+      unawaited(() async {
+        try {
+          final cacheKey = 'track_cover_${track.videoId}';
+          final fileInfo = await DefaultCacheManager().getFileFromCache(cacheKey) ??
+              await DefaultCacheManager().getFileFromCache(artUrl);
+          if (fileInfo != null && fileInfo.file.existsSync()) {
+            if (mediaItem.value?.id == track.videoId) {
+              mediaItem.add(item.copyWith(artUri: Uri.file(fileInfo.file.path)));
+            }
+            return;
+          }
+
+          final token = ZephyrApi().token;
+          final headers = <String, String>{};
+          if (token != null && token.isNotEmpty) {
+            headers['Authorization'] = 'Bearer $token';
+          }
+
+          final fetchedFile = await DefaultCacheManager().downloadFile(
+            artUrl,
+            key: cacheKey,
+            authHeaders: headers,
+          );
+          if (fetchedFile.file.existsSync() && mediaItem.value?.id == track.videoId) {
+            mediaItem.add(item.copyWith(artUri: Uri.file(fetchedFile.file.path)));
+          }
+        } catch (e) {
+          debugPrint('Notice: Background cover cache for notification: $e');
+        }
+      }());
+    }
   }
 
   Timer? _stallRecoveryTimer;
@@ -236,6 +303,7 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> stop() async {
     _stallRecoveryTimer?.cancel();
     _stallRecoveryTimer = null;
+    _wasPlayingBeforeInterruption = false;
     try {
       await _player.stop();
     } catch (_) {}
@@ -288,11 +356,13 @@ Future<ZephyrAudioHandler?> initAudioService() async {
     return await AudioService.init(
       builder: () => ZephyrAudioHandler(),
       config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.example.zephyr.channel.audio',
+        androidNotificationChannelId: 'com.giorgiotassoni.zephyr.channel.audio',
         androidNotificationChannelName: 'Zephyr Music Playback',
+        androidNotificationChannelDescription: 'Zephyr background playback and media controls',
         androidNotificationOngoing: false,
         androidStopForegroundOnPause: true,
         androidNotificationIcon: 'drawable/ic_notification',
+        androidShowNotificationBadge: true,
       ),
     );
   } catch (e) {

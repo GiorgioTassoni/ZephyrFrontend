@@ -521,6 +521,7 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                         aspectRatio: 1.0,
                         child: CoverImage(
                           videoId: videoId,
+                          size: 240,
                           borderRadius: 0,
                         ),
                       ),

@@ -223,9 +223,11 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
       backgroundColor: ZephyrColors.bgDark,
       body: LayoutBuilder(
         builder: (context, constraints) {
+          final isMobile = constraints.maxWidth < 600;
           return Listener(
             onPointerDown: (event) {
-              if (event.localPosition.dx >= constraints.maxWidth - 32) {
+              final touchZone = isMobile ? 60.0 : 32.0;
+              if (event.localPosition.dx >= constraints.maxWidth - touchZone) {
                 _isDraggingScrollbar = true;
               } else {
                 _isDraggingScrollbar = false;
@@ -267,14 +269,31 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
               },
               child: Stack(
                 children: [
-                  Scrollbar(
-                    controller: _scrollController,
-                    thumbVisibility: true,
-                    interactive: true,
-                    child: CustomScrollView(
-                      key: const PageStorageKey('favorites_custom_scroll_view'),
+                  ScrollbarTheme(
+                    data: ScrollbarThemeData(
+                      thumbColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.dragged)) {
+                          return const Color(0xFFF59E0B);
+                        }
+                        return const Color(0xFFF59E0B).withValues(alpha: 0.75);
+                      }),
+                      trackColor: WidgetStateProperty.all(Colors.transparent),
+                      thickness: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.dragged)) return isMobile ? 10.0 : 8.0;
+                        return isMobile ? 7.0 : 5.0;
+                      }),
+                      crossAxisMargin: isMobile ? 8.0 : 4.0,
+                      radius: const Radius.circular(8),
+                      minThumbLength: 48.0,
+                    ),
+                    child: Scrollbar(
                       controller: _scrollController,
-                      slivers: [
+                      thumbVisibility: true,
+                      interactive: true,
+                      child: CustomScrollView(
+                        key: const PageStorageKey('favorites_custom_scroll_view'),
+                        controller: _scrollController,
+                        slivers: [
                   // Hero Banner Header
                   SliverToBoxAdapter(
                     child: LayoutBuilder(
@@ -586,12 +605,13 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         ],
       ),
     ),
+    ),
     if (processedFavorites.isNotEmpty)
       ValueListenableBuilder<_ScrollBubbleData>(
         valueListenable: _bubbleNotifier,
         builder: (context, data, _) {
           return Positioned(
-            right: 28,
+            right: isMobile ? 36 : 28,
             top: data.top,
             child: IgnorePointer(
               child: AnimatedOpacity(

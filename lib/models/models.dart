@@ -313,14 +313,15 @@ class Track {
     String status = (json['download_status'] ?? 'not_in_db').toString();
     bool downloaded = json['is_downloaded'] ?? (status == 'completed');
 
-    // Determine favorited_at timestamp
+    // Determine favorited_at timestamp (added_at is canonical, favorited_at for backward compat)
     DateTime? favAt;
-    final rawFav = json['favorited_at'] ?? json['added_at'] ?? json['liked_at'];
+    final rawFav = json['added_at'] ?? json['favorited_at'] ?? json['liked_at'];
     if (rawFav != null) {
       if (rawFav is DateTime) {
-        favAt = rawFav;
+        favAt = rawFav.toUtc();
       } else if (rawFav is String && rawFav.isNotEmpty) {
-        favAt = DateTime.tryParse(rawFav);
+        final s = rawFav.endsWith('Z') || rawFav.contains('+') ? rawFav : '${rawFav}Z';
+        favAt = DateTime.tryParse(s)?.toUtc();
       }
     }
 

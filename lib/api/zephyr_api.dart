@@ -763,6 +763,35 @@ class ZephyrApi {
     }
   }
 
+  Future<void> addUserQueue(Track track) async {
+    try {
+      await _dio.post(
+        '/api/player/user-queue',
+        data: {
+          'track': {
+            'track_id': track.videoId,
+            'title': track.title,
+            'artists': track.artists,
+            'album': track.album,
+            'duration_seconds': track.duration?.inSeconds ?? 0,
+            'cover_url': track.coverUrl ?? '/api/tracks/cover/${track.videoId}',
+            'stream_url': '/api/tracks/stream/${track.videoId}',
+          },
+        },
+      );
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<void> clearUserQueue() async {
+    try {
+      await _dio.delete('/api/player/user-queue');
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
   // --- Albums & Artists ---
 
   Future<Album> getAlbumDetail(String browseId, {bool refresh = false}) async {

@@ -434,7 +434,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Zephyr Music Client v1.0.0',
+                    'Zephyr Music Client v1.0.7 Nightly',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
                   ),
                   SizedBox(height: 8),

@@ -1815,19 +1815,34 @@ class _SidebarPlaylistItemState extends ConsumerState<_SidebarPlaylistItem> {
             ],
           ),
         ),
-        const PopupMenuItem<String>(
-          value: 'delete',
-          child: Row(
-            children: [
-              Icon(Icons.delete_outline, size: 18, color: ZephyrColors.error),
-              SizedBox(width: 10),
-              Text(
-                'Delete Playlist',
-                style: TextStyle(color: ZephyrColors.error, fontSize: 13),
-              ),
-            ],
+        if (widget.playlist.isOwner)
+          const PopupMenuItem<String>(
+            value: 'edit',
+            child: Row(
+              children: [
+                Icon(Icons.edit_outlined, size: 18, color: ZephyrColors.textDim),
+                SizedBox(width: 10),
+                Text(
+                  'Edit Playlist',
+                  style: TextStyle(color: ZephyrColors.text, fontSize: 13),
+                ),
+              ],
+            ),
           ),
-        ),
+        if (widget.playlist.isOwner)
+          const PopupMenuItem<String>(
+            value: 'delete',
+            child: Row(
+              children: [
+                Icon(Icons.delete_outline, size: 18, color: ZephyrColors.error),
+                SizedBox(width: 10),
+                Text(
+                  'Delete Playlist',
+                  style: TextStyle(color: ZephyrColors.error, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
       ],
     );
 
@@ -1835,9 +1850,72 @@ class _SidebarPlaylistItemState extends ConsumerState<_SidebarPlaylistItem> {
 
     if (selected == 'open') {
       widget.onTap();
+    } else if (selected == 'edit') {
+      _showEditDialog(context);
     } else if (selected == 'delete') {
       _confirmDelete(context);
     }
+  }
+
+  void _showEditDialog(BuildContext context) {
+    final nameController = TextEditingController(text: widget.playlist.name);
+    final descController = TextEditingController(text: widget.playlist.description ?? '');
+    bool isPublic = widget.playlist.isPublic;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: ZephyrColors.bgCard,
+          title: const Text('Edit Playlist Details'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Playlist Name'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descController,
+                decoration: const InputDecoration(labelText: 'Description'),
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                title: const Text('Public Playlist'),
+                subtitle: const Text('Allow other users on this server to see and play'),
+                value: isPublic,
+                activeColor: ZephyrColors.primary,
+                contentPadding: EdgeInsets.zero,
+                onChanged: (val) => setDialogState(() => isPublic = val),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel', style: TextStyle(color: ZephyrColors.textDim)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: ZephyrColors.primary),
+              onPressed: () async {
+                Navigator.of(ctx).pop();
+                await ref.read(libraryProvider.notifier).updatePlaylist(
+                      widget.playlist.id,
+                      name: nameController.text.trim(),
+                      description: descController.text.trim(),
+                      isPublic: isPublic,
+                    );
+                if (context.mounted) {
+                  ZephyrToast.show(context, 'Playlist updated');
+                }
+              },
+              child: const Text('Save', style: TextStyle(color: Colors.black)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _confirmDelete(BuildContext context) {

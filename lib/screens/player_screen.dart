@@ -180,18 +180,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
   void _parseLrc(String lrcContent) {
     final lines = lrcContent.split('\n');
     final List<LrcLine> parsed = [];
-    final regex = RegExp(r'\[(\d+):(\d{2})(?:\.(\d+))?\](.*)');
+    final timeTagRegex = RegExp(r'\[(\d+):(\d{2})(?:[:\.](\d{1,3}))?\]');
 
     for (final line in lines) {
-      final match = regex.firstMatch(line.trim());
-      if (match != null) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+
+      final matches = timeTagRegex.allMatches(trimmed).toList();
+      if (matches.isEmpty) continue;
+
+      final text = trimmed.replaceAll(timeTagRegex, '').trim();
+
+      for (final match in matches) {
         final min = int.tryParse(match.group(1) ?? '0') ?? 0;
         final sec = int.tryParse(match.group(2) ?? '0') ?? 0;
-        final msStr = match.group(3) ?? '0';
-        final ms = ((double.tryParse('0.$msStr') ?? 0.0) * 1000).round();
-        final text = match.group(4) ?? '';
+        final fracStr = match.group(3) ?? '0';
+        int ms = 0;
+        if (fracStr.length == 1) {
+          ms = (int.tryParse(fracStr) ?? 0) * 100;
+        } else if (fracStr.length == 2) {
+          ms = (int.tryParse(fracStr) ?? 0) * 10;
+        } else {
+          ms = int.tryParse(fracStr) ?? 0;
+        }
         final timestamp = Duration(minutes: min, seconds: sec, milliseconds: ms);
-        parsed.add(LrcLine(timestamp: timestamp, text: text.trim()));
+        parsed.add(LrcLine(timestamp: timestamp, text: text));
       }
     }
     // Sort by timestamp

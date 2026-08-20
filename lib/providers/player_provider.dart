@@ -1510,14 +1510,33 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       }
     }
 
-    _positionSub = _audioPlayer.onPositionChanged.listen(
-      updatePos,
-      onError: (_) {},
-    );
-    _durationSub = _audioPlayer.onDurationChanged.listen(
-      updateDur,
-      onError: (_) {},
-    );
+    if (zephyrAudioHandler == null) {
+      _positionSub = _audioPlayer.onPositionChanged.listen(
+        updatePos,
+        onError: (_) {},
+      );
+      _durationSub = _audioPlayer.onDurationChanged.listen(
+        updateDur,
+        onError: (_) {},
+      );
+      _stateSub = _audioPlayer.onPlayerStateChanged.listen((playerState) {
+        if (!state.isPlayerDevice || _localPlaybackSuppressed) return;
+        final isPlaying = playerState == ap.PlayerState.playing;
+        state = state.copyWith(
+          isPlaying: isPlaying,
+          isLoading: isPlaying ? false : state.isLoading,
+        );
+        LinuxMprisService().updateState(
+          isPlaying: isPlaying,
+          track: state.currentTrack,
+          apiBaseUrl: _api.baseUrl,
+        );
+      }, onError: (_) {});
+      _completeSub = _audioPlayer.onPlayerComplete.listen((_) {
+        if (!state.isPlaying || _localPlaybackSuppressed) return;
+        _handlePlaybackComplete();
+      }, onError: (_) {});
+    }
 
     Timer.periodic(const Duration(seconds: 1), (_) {
       if (!state.isPlayerDevice &&
@@ -1557,25 +1576,6 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       }, onError: (_) {});
     } catch (_) {}
 
-    _stateSub = _audioPlayer.onPlayerStateChanged.listen((playerState) {
-      if (!state.isPlayerDevice || _localPlaybackSuppressed) return;
-      final isPlaying = playerState == ap.PlayerState.playing;
-      state = state.copyWith(
-        isPlaying: isPlaying,
-        isLoading: isPlaying ? false : state.isLoading,
-      );
-      LinuxMprisService().updateState(
-        isPlaying: isPlaying,
-        track: state.currentTrack,
-        apiBaseUrl: _api.baseUrl,
-      );
-    }, onError: (_) {});
-
-    _completeSub = _audioPlayer.onPlayerComplete.listen((_) {
-      if (!state.isPlaying || _localPlaybackSuppressed) return;
-      _handlePlaybackComplete();
-    }, onError: (_) {});
-
     _audioPlayer.onLog.listen((_) {}, onError: (_) {});
   }
 
@@ -1594,7 +1594,11 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
     if (!state.isPlayerDevice) {
       // Remote control mode: dispatch play command to server for active player to execute
-      final List<Track> fullToSend = playQueue.isNotEmpty ? playQueue : [track];
+      List<Track> fullToSend = playQueue.isNotEmpty ? playQueue : [track];
+      if (origin != 'queue' && state.isShuffled && playQueue.length > 1) {
+        final remaining = playQueue.where((t) => t.videoId != track.videoId).toList()..shuffle();
+        fullToSend = [track, ...remaining];
+      }
 
       try {
         // Render the requested track immediately, but never inherit the
@@ -1604,7 +1608,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         state = state.copyWith(
           currentTrack: track,
           queue: fullToSend,
-          originalQueue: state.isShuffled ? state.originalQueue : fullToSend,
+          originalQueue: playQueue.isNotEmpty ? playQueue : [track],
           currentIndex: 0,
           position: Duration.zero,
           duration: track.duration ?? Duration.zero,
@@ -1655,33 +1659,44 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         ? track.duration!
         : Duration.zero;
 
-    List<Track> queueToSet = playQueue;
-    if (isNewQueue) {
-      if (state.isShuffled) {
-        final remaining = playQueue.where((t) => t.videoId != track.videoId).toList()..shuffle();
-        queueToSet = [track, ...remaining];
-      } else {
-        final foundIdx = playQueue.indexWhere((t) => t.videoId == track.videoId);
-        if (foundIdx != -1) {
-          final remaining = playQueue.sublist(foundIdx + 1);
-          queueToSet = [track, ...remaining];
-        }
-      }
-    } else if (origin == 'context' && state.queue.isNotEmpty) {
-      if (state.isShuffled) {
-        final remaining = playQueue.where((t) => t.videoId != track.videoId).toList()..shuffle();
-        queueToSet = [track, ...remaining];
-      } else {
-        final remaining = List<Track>.from(state.queue)
-          ..removeWhere((t) => t.videoId == track.videoId);
-        queueToSet = [track, ...remaining];
-      }
-    } else if (origin == 'queue' && state.queue.isNotEmpty) {
-      // Skip-to semantics for queue view clicks: drop preceding tracks
-      final foundIdx = state.queue.indexWhere(
-        (t) => t.videoId == track.videoId,
+    List<Track> queueToSet;
+    List<Track> originalQueueToSet;
+    int targetIndex = 0;
+
+    final bool isFromCurrentQueue = origin == 'queue' ||
+        (origin != 'context' &&
+            !isNewQueue &&
+            state.queue.isNotEmpty &&
+            state.queue.any((t) => _isSameTrack(t.videoId, track.videoId)));
+
+    if (isFromCurrentQueue) {
+      queueToSet = state.queue;
+      originalQueueToSet = state.originalQueue.isNotEmpty
+          ? state.originalQueue
+          : state.queue;
+      final foundIdx = queueToSet.indexWhere(
+        (t) => _isSameTrack(t.videoId, track.videoId),
       );
-      queueToSet = foundIdx != -1 ? state.queue.sublist(foundIdx) : state.queue;
+      targetIndex = foundIdx != -1 ? foundIdx : 0;
+    } else {
+      // New playlist / album / context playback
+      final baseList = playQueue.isNotEmpty ? playQueue : [track];
+      originalQueueToSet = List<Track>.from(baseList);
+
+      if (state.isShuffled && baseList.length > 1) {
+        final remaining = baseList
+            .where((t) => !_isSameTrack(t.videoId, track.videoId))
+            .toList()
+          ..shuffle();
+        queueToSet = [track, ...remaining];
+        targetIndex = 0;
+      } else {
+        queueToSet = List<Track>.from(baseList);
+        final foundIdx = queueToSet.indexWhere(
+          (t) => _isSameTrack(t.videoId, track.videoId),
+        );
+        targetIndex = foundIdx != -1 ? foundIdx : 0;
+      }
     }
 
     // Immediately update UI metadata so skipping responds instantly on screen in loading/paused state
@@ -1690,8 +1705,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       isPlaying: false,
       currentTrack: track,
       queue: queueToSet,
-      originalQueue: isNewQueue ? playQueue : (state.isShuffled ? state.originalQueue : playQueue),
-      currentIndex: 0,
+      originalQueue: originalQueueToSet,
+      currentIndex: targetIndex,
       position: initialPosition ?? Duration.zero,
       duration: initialDur,
       errorMessage: null,
@@ -2309,16 +2324,17 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       );
     } catch (_) {}
 
-    try {
-      if (zephyrAudioHandler != null) {
+    if (zephyrAudioHandler != null) {
+      try {
         await zephyrAudioHandler!.seek(position);
+      } catch (e) {
+        debugPrint('ZephyrAudioHandler seek notice: $e');
       }
-    } catch (e) {
-      debugPrint('ZephyrAudioHandler seek notice: $e');
+    } else {
+      try {
+        await _audioPlayer.seek(position).timeout(const Duration(seconds: 1));
+      } catch (_) {}
     }
-    try {
-      await _audioPlayer.seek(position).timeout(const Duration(seconds: 1));
-    } catch (_) {}
 
     _api
         .updatePlayerState(
@@ -2393,10 +2409,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       final nextIndex = effectiveIdx + 1;
 
       if (nextIndex < state.queue.length) {
-        await playTrack(state.queue[nextIndex], state.queue);
+        await playTrack(state.queue[nextIndex], state.queue, origin: 'queue');
         return;
       } else if (state.queueMode == 'repeat_all') {
-        await playTrack(state.queue.first, state.queue);
+        await playTrack(state.queue.first, state.queue, origin: 'queue');
         return;
       }
     }
@@ -2487,10 +2503,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       final prevIndex = effectiveIdx - 1;
 
       if (prevIndex >= 0) {
-        await playTrack(state.queue[prevIndex], state.queue);
+        await playTrack(state.queue[prevIndex], state.queue, origin: 'queue');
         return;
       } else if (state.queueMode == 'repeat_all') {
-        await playTrack(state.queue.last, state.queue);
+        await playTrack(state.queue.last, state.queue, origin: 'queue');
         return;
       } else {
         await seek(Duration.zero);

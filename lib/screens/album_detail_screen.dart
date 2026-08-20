@@ -133,8 +133,12 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
       coverUrl: t.coverUrl ?? _album!.coverUrl,
       album: t.album ?? _album!.name,
       albumId: t.albumId ?? _album!.id,
-    )).toList()..shuffle();
+    )).toList();
 
+    final playerState = ref.read(playerProvider);
+    if (!playerState.isShuffled) {
+      ref.read(playerProvider.notifier).toggleShuffle();
+    }
     ref.read(playerProvider.notifier).playTrack(
       enrichedTracks.first,
       enrichedTracks,

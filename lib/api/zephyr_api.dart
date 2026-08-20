@@ -949,13 +949,16 @@ class ZephyrApi {
 
   // --- Favorites ---
 
-  Future<List<Track>> getFavorites({int offset = 0}) async {
+  Future<List<Track>> getFavorites({int? offset, int? limit}) async {
     try {
+      final Map<String, dynamic> params = {};
+      if (offset != null) params['offset'] = offset;
+      if (limit != null) params['limit'] = limit;
       final response = await _dio.get(
         '/api/favorites',
-        queryParameters: {'offset': offset},
+        queryParameters: params.isNotEmpty ? params : null,
       );
-      final List list = response.data;
+      final List list = response.data is List ? response.data : [];
       return list.map((e) => Track.fromJson(e)).toList();
     } on DioException catch (e) {
       throw _handleDioError(e);
@@ -963,12 +966,16 @@ class ZephyrApi {
   }
 
   Future<({List<Track> tracks, int totalCount})> getFavoritesWithCount({
-    int offset = 0,
+    int? offset,
+    int? limit,
   }) async {
     try {
+      final Map<String, dynamic> params = {};
+      if (offset != null) params['offset'] = offset;
+      if (limit != null) params['limit'] = limit;
       final response = await _dio.get(
         '/api/favorites',
-        queryParameters: {'offset': offset},
+        queryParameters: params.isNotEmpty ? params : null,
       );
       final List list = response.data is List ? response.data : [];
       final tracks = list.map((e) => Track.fromJson(e)).toList();

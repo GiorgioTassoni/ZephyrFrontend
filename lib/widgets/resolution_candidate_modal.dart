@@ -328,9 +328,271 @@ class _ResolutionCandidateModalState
     final isSubmitting = _submittingVideoId == c.videoId;
     final isOMV = c.videoType == 'OMV';
     final thumbUrl = _getEffectiveThumbnail(c.thumbnail);
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
+    final thumbnailWidget = ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: thumbUrl != null && thumbUrl.isNotEmpty
+          ? CachedNetworkImage(
+              imageUrl: thumbUrl,
+              width: isMobile ? 46 : 52,
+              height: isMobile ? 46 : 52,
+              fit: BoxFit.cover,
+              placeholder: (context, url) => Container(
+                width: isMobile ? 46 : 52,
+                height: isMobile ? 46 : 52,
+                color: ZephyrColors.bgDark,
+                child: const Icon(
+                  Icons.music_note,
+                  color: ZephyrColors.textDim,
+                  size: 22,
+                ),
+              ),
+              errorWidget: (context, url, error) => Container(
+                width: isMobile ? 46 : 52,
+                height: isMobile ? 46 : 52,
+                color: ZephyrColors.bgDark,
+                child: const Icon(
+                  Icons.music_note,
+                  color: ZephyrColors.textDim,
+                  size: 22,
+                ),
+              ),
+            )
+          : Container(
+              width: isMobile ? 46 : 52,
+              height: isMobile ? 46 : 52,
+              color: ZephyrColors.bgDark,
+              child: Icon(
+                isLocal ? Icons.folder_rounded : Icons.music_note,
+                color: isLocal ? Colors.tealAccent : ZephyrColors.textDim,
+                size: 22,
+              ),
+            ),
+    );
+
+    final detailsColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                c.title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+                maxLines: isMobile ? 2 : 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 6),
+            if (isLocal)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.tealAccent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: Colors.tealAccent.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_circle_outline_rounded, color: Colors.tealAccent, size: 12),
+                    SizedBox(width: 3),
+                    Text(
+                      'In Library',
+                      style: TextStyle(
+                        color: Colors.tealAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (c.matchScore > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _getScoreColor(c.matchScore).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: _getScoreColor(c.matchScore).withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Text(
+                  '${c.matchScore}% match',
+                  style: TextStyle(
+                    color: _getScoreColor(c.matchScore),
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${c.artists.join(', ')} • ${_formatDuration(c.durationSeconds)}',
+          style: const TextStyle(
+            color: ZephyrColors.textDim,
+            fontSize: 12,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            if (isLocal)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                decoration: BoxDecoration(
+                  color: Colors.teal.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: Colors.tealAccent.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.sd_storage_rounded, color: Colors.tealAccent, size: 12),
+                    SizedBox(width: 3),
+                    Text(
+                      'Local Audio (No Download)',
+                      style: TextStyle(
+                        color: Colors.tealAccent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (isOMV)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.purple.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: Colors.purpleAccent.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.videocam_rounded, color: Colors.purpleAccent, size: 12),
+                    SizedBox(width: 4),
+                    Text(
+                      'Official Video (OMV)',
+                      style: TextStyle(
+                        color: Colors.purpleAccent,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF06B6D4).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.audiotrack_rounded, color: Color(0xFF06B6D4), size: 12),
+                    const SizedBox(width: 3),
+                    Text(
+                      c.provider != null ? '${c.provider!.toUpperCase()} Track' : 'Audio Track (ATV)',
+                      style: const TextStyle(
+                        color: Color(0xFF06B6D4),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ...c.matchReasons.map((reason) {
+              final isFeat = reason == 'feat_variant';
+              final isMismatch = reason == 'version_marker_mismatch';
+              final color = isFeat
+                  ? Colors.tealAccent
+                  : (isMismatch ? Colors.orangeAccent : ZephyrColors.textDim);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                  border: isFeat || isMismatch
+                      ? Border.all(color: color.withValues(alpha: 0.3))
+                      : null,
+                ),
+                child: Text(
+                  _formatReason(reason),
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: isFeat || isMismatch ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ],
+    );
+
+    final selectButton = ElevatedButton.icon(
+      onPressed: (_submittingVideoId != null || isSelectionDisabled)
+          ? null
+          : () => _selectCandidate(c),
+      icon: isSubmitting
+          ? const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(ZephyrColors.bgDark),
+              ),
+            )
+          : const Icon(Icons.check_rounded, size: 15),
+      label: Text(
+        isSubmitting
+            ? (isLocal ? 'Linking...' : 'Selecting...')
+            : (isLocal ? 'Link Track' : 'Select Match'),
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isLocal ? Colors.tealAccent : ZephyrColors.primary,
+        foregroundColor: ZephyrColors.bgDark,
+        padding: EdgeInsets.symmetric(
+          horizontal: isMobile ? 16 : 14,
+          vertical: isMobile ? 11 : 10,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        elevation: 0,
+      ),
+    );
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(isMobile ? 12 : 14),
       decoration: BoxDecoration(
         color: isLocal
             ? Colors.teal.withValues(alpha: 0.1)
@@ -344,274 +606,34 @@ class _ResolutionCandidateModalState
                   : Colors.white.withValues(alpha: 0.08)),
         ),
       ),
-      child: Row(
-        children: [
-          // Candidate Thumbnail
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: thumbUrl != null && thumbUrl.isNotEmpty
-                ? CachedNetworkImage(
-                    imageUrl: thumbUrl,
-                    width: 52,
-                    height: 52,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => Container(
-                      width: 52,
-                      height: 52,
-                      color: ZephyrColors.bgDark,
-                      child: const Icon(
-                        Icons.music_note,
-                        color: ZephyrColors.textDim,
-                        size: 24,
-                      ),
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      width: 52,
-                      height: 52,
-                      color: ZephyrColors.bgDark,
-                      child: const Icon(
-                        Icons.music_note,
-                        color: ZephyrColors.textDim,
-                        size: 24,
-                      ),
-                    ),
-                  )
-                : Container(
-                    width: 52,
-                    height: 52,
-                    color: ZephyrColors.bgDark,
-                    child: Icon(
-                      isLocal ? Icons.folder_rounded : Icons.music_note,
-                      color: isLocal ? Colors.tealAccent : ZephyrColors.textDim,
-                      size: 24,
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 14),
-
-          // Details
-          Expanded(
-            child: Column(
+      child: isMobile
+          ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        c.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    if (isLocal)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.tealAccent.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: Colors.tealAccent.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.check_circle_outline_rounded, color: Colors.tealAccent, size: 12),
-                            SizedBox(width: 3),
-                            Text(
-                              'In Library',
-                              style: TextStyle(
-                                color: Colors.tealAccent,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    else if (c.matchScore > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: _getScoreColor(c.matchScore).withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: _getScoreColor(c.matchScore).withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: Text(
-                          '${c.matchScore}% match',
-                          style: TextStyle(
-                            color: _getScoreColor(c.matchScore),
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
+                    thumbnailWidget,
+                    const SizedBox(width: 12),
+                    Expanded(child: detailsColumn),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${c.artists.join(', ')} • ${_formatDuration(c.durationSeconds)}',
-                  style: const TextStyle(
-                    color: ZephyrColors.textDim,
-                    fontSize: 12,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: [
-                    if (isLocal)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                        decoration: BoxDecoration(
-                          color: Colors.teal.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: Colors.tealAccent.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.sd_storage_rounded, color: Colors.tealAccent, size: 12),
-                            SizedBox(width: 3),
-                            Text(
-                              'Local Audio (No Download)',
-                              style: TextStyle(
-                                color: Colors.tealAccent,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    else if (isOMV)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.purple.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: Colors.purpleAccent.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.videocam_rounded, color: Colors.purpleAccent, size: 12),
-                            SizedBox(width: 4),
-                            Text(
-                              'Official Video (OMV)',
-                              style: TextStyle(
-                                color: Colors.purpleAccent,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    else
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                        margin: const EdgeInsets.only(right: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF06B6D4).withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.audiotrack_rounded, color: Color(0xFF06B6D4), size: 12),
-                            const SizedBox(width: 3),
-                            Text(
-                              c.provider != null ? '${c.provider!.toUpperCase()} Track' : 'Audio Track (ATV)',
-                              style: const TextStyle(
-                                color: Color(0xFF06B6D4),
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ...c.matchReasons.map((reason) {
-                      final isFeat = reason == 'feat_variant';
-                      final isMismatch = reason == 'version_marker_mismatch';
-                      final color = isFeat
-                          ? Colors.tealAccent
-                          : (isMismatch ? Colors.orangeAccent : ZephyrColors.textDim);
-                      return Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(4),
-                          border: isFeat || isMismatch
-                              ? Border.all(color: color.withValues(alpha: 0.3))
-                              : null,
-                        ),
-                        child: Text(
-                          _formatReason(reason),
-                          style: TextStyle(
-                            color: color,
-                            fontSize: 10,
-                            fontWeight: isFeat || isMismatch ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: selectButton,
                 ),
               ],
+            )
+          : Row(
+              children: [
+                thumbnailWidget,
+                const SizedBox(width: 14),
+                Expanded(child: detailsColumn),
+                const SizedBox(width: 12),
+                selectButton,
+              ],
             ),
-          ),
-          const SizedBox(width: 12),
-
-          // Select Button
-          ElevatedButton.icon(
-            onPressed: (_submittingVideoId != null || isSelectionDisabled)
-                ? null
-                : () => _selectCandidate(c),
-            icon: isSubmitting
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(ZephyrColors.bgDark),
-                    ),
-                  )
-                : const Icon(Icons.check_rounded, size: 15),
-            label: Text(
-              isSubmitting
-                  ? (isLocal ? 'Linking...' : 'Selecting...')
-                  : (isLocal ? 'Link' : 'Select'),
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isLocal ? Colors.tealAccent : ZephyrColors.primary,
-              foregroundColor: ZephyrColors.bgDark,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              elevation: 0,
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -734,20 +756,29 @@ class _ResolutionCandidateModalState
     final exp = widget.exception;
     final isSelectionDisabled =
         exp.resolutionId == null && exp.candidates.isEmpty;
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 10 : 24,
+        vertical: isMobile ? 16 : 36,
+      ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(isMobile ? 18 : 24),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 620, maxHeight: 720),
-            padding: const EdgeInsets.all(28),
+            constraints: BoxConstraints(
+              maxWidth: 620,
+              maxHeight: isMobile
+                  ? MediaQuery.of(context).size.height * 0.92
+                  : 720,
+            ),
+            padding: EdgeInsets.all(isMobile ? 16 : 28),
             decoration: BoxDecoration(
               color: ZephyrColors.bgCard.withValues(alpha: 0.9),
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(isMobile ? 18 : 24),
               border: Border.all(
                 color: Colors.white.withValues(alpha: 0.12),
                 width: 1.5,
@@ -768,27 +799,27 @@ class _ResolutionCandidateModalState
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: EdgeInsets.all(isMobile ? 8 : 12),
                       decoration: BoxDecoration(
                         color: ZephyrColors.primary.withValues(alpha: 0.2),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.find_in_page_rounded,
                         color: ZephyrColors.primary,
-                        size: 26,
+                        size: isMobile ? 20 : 26,
                       ),
                     ),
-                    const SizedBox(width: 16),
+                    SizedBox(width: isMobile ? 10 : 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             'Match Selection Required',
                             style: TextStyle(
                               color: ZephyrColors.text,
-                              fontSize: 20,
+                              fontSize: isMobile ? 16.5 : 20,
                               fontWeight: FontWeight.bold,
                               letterSpacing: -0.5,
                             ),
@@ -800,44 +831,46 @@ class _ResolutionCandidateModalState
                               color: ZephyrColors.textDim.withValues(
                                 alpha: 0.8,
                               ),
-                              fontSize: 13,
+                              fontSize: isMobile ? 11.5 : 13,
                             ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
+                SizedBox(height: isMobile ? 12 : 20),
 
                 // Target Track Info Card
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  padding: EdgeInsets.all(isMobile ? 10 : 14),
                   decoration: BoxDecoration(
                     color: ZephyrColors.bgLight.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                       color: Colors.white.withValues(alpha: 0.08),
                     ),
                   ),
                   child: Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.music_note_rounded,
                         color: ZephyrColors.primary,
-                        size: 20,
+                        size: isMobile ? 18 : 20,
                       ),
-                      const SizedBox(width: 12),
+                      SizedBox(width: isMobile ? 8 : 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               exp.title.isNotEmpty ? exp.title : 'Track Match',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 14.5,
+                                fontSize: isMobile ? 13.5 : 14.5,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -845,9 +878,9 @@ class _ResolutionCandidateModalState
                             if (exp.artists.isNotEmpty)
                               Text(
                                 exp.artists.join(', '),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: ZephyrColors.textDim,
-                                  fontSize: 12.5,
+                                  fontSize: isMobile ? 11.5 : 12.5,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -859,8 +892,8 @@ class _ResolutionCandidateModalState
                           exp.durationSeconds! > 0)
                         Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
+                            horizontal: 6,
+                            vertical: 3,
                           ),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.3),
@@ -868,9 +901,9 @@ class _ResolutionCandidateModalState
                           ),
                           child: Text(
                             _formatDuration(exp.durationSeconds!),
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: ZephyrColors.textDim,
-                              fontSize: 12,
+                              fontSize: isMobile ? 11 : 12,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -878,7 +911,7 @@ class _ResolutionCandidateModalState
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: isMobile ? 10 : 12),
 
                 // Custom Search Input Box (Escape hatch)
                 Row(
@@ -886,20 +919,20 @@ class _ResolutionCandidateModalState
                     Expanded(
                       child: TextField(
                         controller: _searchController,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: ZephyrColors.text,
-                          fontSize: 13,
+                          fontSize: isMobile ? 12 : 13,
                         ),
                         decoration: InputDecoration(
                           hintText: 'Search custom YouTube Music query...',
-                          hintStyle: const TextStyle(
+                          hintStyle: TextStyle(
                             color: ZephyrColors.textMuted,
-                            fontSize: 13,
+                            fontSize: isMobile ? 12 : 13,
                           ),
                           isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: isMobile ? 10 : 14,
+                            vertical: isMobile ? 8 : 10,
                           ),
                           filled: true,
                           fillColor: Colors.black.withValues(alpha: 0.3),
@@ -932,15 +965,15 @@ class _ResolutionCandidateModalState
                           : () => _performCustomSearch(_searchController.text),
                       icon: const Icon(
                         Icons.search_rounded,
-                        size: 16,
+                        size: 15,
                         color: ZephyrColors.primary,
                       ),
-                      label: const Text(
+                      label: Text(
                         'Search',
                         style: TextStyle(
                           color: ZephyrColors.primary,
                           fontWeight: FontWeight.bold,
-                          fontSize: 13,
+                          fontSize: isMobile ? 12 : 13,
                         ),
                       ),
                       style: ElevatedButton.styleFrom(
@@ -948,9 +981,9 @@ class _ResolutionCandidateModalState
                           alpha: 0.15,
                         ),
                         foregroundColor: ZephyrColors.primary,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isMobile ? 10 : 14,
+                          vertical: isMobile ? 8 : 10,
                         ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
@@ -963,13 +996,13 @@ class _ResolutionCandidateModalState
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                SizedBox(height: isMobile ? 10 : 14),
 
                 if (_errorMessage != null) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
+                      horizontal: 12,
+                      vertical: 8,
                     ),
                     decoration: BoxDecoration(
                       color: Colors.red.withValues(alpha: 0.15),
@@ -983,22 +1016,22 @@ class _ResolutionCandidateModalState
                         const Icon(
                           Icons.error_outline_rounded,
                           color: Colors.redAccent,
-                          size: 18,
+                          size: 16,
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             _errorMessage!,
                             style: const TextStyle(
                               color: Colors.redAccent,
-                              fontSize: 12.5,
+                              fontSize: 12,
                             ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 10),
                 ],
 
                 // Candidates / Local Matches List
@@ -1123,102 +1156,104 @@ class _ResolutionCandidateModalState
                           ],
                         ),
                 ),
-                const SizedBox(height: 20),
+                SizedBox(height: isMobile ? 12 : 20),
 
-                // Footer Buttons
+                // Footer Buttons (Responsive Wrap layout)
                 Builder(
                   builder: (context) {
                     final authState = ref.watch(authProvider);
                     final isCuratorOrAdmin =
                         authState.isCurator || authState.isAdmin;
-                    return Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (isCuratorOrAdmin) ...[
-                          ElevatedButton.icon(
-                            onPressed:
-                                _submittingVideoId != null ||
-                                    _isLoadingCandidates
-                                ? null
-                                : _fulfillWithFile,
-                            icon: const Icon(
-                              Icons.upload_file_rounded,
-                              size: 16,
-                            ),
-                            label: const Text('Fulfill with Local File'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.indigoAccent,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
+                    return Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.end,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (isCuratorOrAdmin)
+                            ElevatedButton.icon(
+                              onPressed:
+                                  _submittingVideoId != null ||
+                                      _isLoadingCandidates
+                                  ? null
+                                  : _fulfillWithFile,
+                              icon: const Icon(
+                                Icons.upload_file_rounded,
+                                size: 15,
                               ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                              label: const Text('Fulfill with File'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.indigoAccent,
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: isMobile ? 10 : 14,
+                                  vertical: isMobile ? 8 : 10,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                elevation: 0,
                               ),
-                              elevation: 0,
                             ),
-                          ),
-                          const Spacer(),
-                        ],
-                        if (widget.isImportResolution) ...[
-                          OutlinedButton.icon(
-                            onPressed: (_submittingVideoId != null ||
-                                    _isSkipping ||
-                                    _isLoadingCandidates)
-                                ? null
-                                : _skipSong,
-                            icon: _isSkipping
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
-                                        Colors.redAccent,
+                          if (widget.isImportResolution)
+                            OutlinedButton.icon(
+                              onPressed: (_submittingVideoId != null ||
+                                      _isSkipping ||
+                                      _isLoadingCandidates)
+                                  ? null
+                                  : _skipSong,
+                              icon: _isSkipping
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          Colors.redAccent,
+                                        ),
                                       ),
+                                    )
+                                  : const Icon(
+                                      Icons.skip_next_rounded,
+                                      size: 15,
+                                      color: Colors.redAccent,
                                     ),
-                                  )
-                                : const Icon(
-                                    Icons.skip_next_rounded,
-                                    size: 16,
-                                    color: Colors.redAccent,
-                                  ),
-                            label: Text(
-                              _isSkipping ? 'Skipping...' : 'Skip Song',
-                              style: const TextStyle(
-                                color: Colors.redAccent,
-                                fontWeight: FontWeight.bold,
+                              label: Text(
+                                _isSkipping ? 'Skipping...' : 'Skip Song',
+                                style: const TextStyle(
+                                  color: Colors.redAccent,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.redAccent),
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: isMobile ? 10 : 14,
+                                  vertical: isMobile ? 8 : 10,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
                               ),
                             ),
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Colors.redAccent),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                          TextButton(
+                            onPressed: _submittingVideoId != null || _isSkipping
+                                ? null
+                                : _cancel,
+                            style: TextButton.styleFrom(
+                              foregroundColor: ZephyrColors.textDim,
+                              padding: EdgeInsets.symmetric(
+                                horizontal: isMobile ? 12 : 20,
+                                vertical: isMobile ? 8 : 12,
                               ),
                             ),
+                            child: const Text('Cancel'),
                           ),
-                          const SizedBox(width: 10),
                         ],
-                        TextButton(
-                          onPressed: _submittingVideoId != null || _isSkipping
-                              ? null
-                              : _cancel,
-                          style: TextButton.styleFrom(
-                            foregroundColor: ZephyrColors.textDim,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 12,
-                            ),
-                          ),
-                          child: const Text('Cancel'),
-                        ),
-                      ],
+                      ),
                     );
                   },
                 ),

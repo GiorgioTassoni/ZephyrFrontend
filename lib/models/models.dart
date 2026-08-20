@@ -19,6 +19,7 @@ class Track {
   final String? lyricsText;
   final String? lyricsLrc;
   final String? reason; // 'same_album' | 'same_artist' | 'similar_artist'
+  final DateTime? favoritedAt;
 
   Track({
     required this.videoId,
@@ -38,6 +39,7 @@ class Track {
     this.lyricsText,
     this.lyricsLrc,
     this.reason,
+    this.favoritedAt,
   });
 
   bool get needsResolution => downloadStatus == 'needs_resolution';
@@ -311,6 +313,17 @@ class Track {
     String status = (json['download_status'] ?? 'not_in_db').toString();
     bool downloaded = json['is_downloaded'] ?? (status == 'completed');
 
+    // Determine favorited_at timestamp
+    DateTime? favAt;
+    final rawFav = json['favorited_at'] ?? json['added_at'] ?? json['liked_at'];
+    if (rawFav != null) {
+      if (rawFav is DateTime) {
+        favAt = rawFav;
+      } else if (rawFav is String && rawFav.isNotEmpty) {
+        favAt = DateTime.tryParse(rawFav);
+      }
+    }
+
     return Track(
       videoId: vId,
       ytId: yId,
@@ -334,6 +347,7 @@ class Track {
       lyricsText: json['lyrics_text']?.toString(),
       lyricsLrc: json['lyrics_lrc']?.toString(),
       reason: json['reason']?.toString(),
+      favoritedAt: favAt,
     );
   }
 
@@ -356,6 +370,7 @@ class Track {
       'is_downloaded': isDownloaded,
       'lyrics_text': lyricsText,
       'lyrics_lrc': lyricsLrc,
+      'favorited_at': favoritedAt?.toIso8601String(),
     };
   }
 
@@ -377,6 +392,7 @@ class Track {
     String? lyricsText,
     String? lyricsLrc,
     String? reason,
+    DateTime? favoritedAt,
   }) {
     return Track(
       videoId: videoId ?? this.videoId,
@@ -396,6 +412,7 @@ class Track {
       lyricsText: lyricsText ?? this.lyricsText,
       lyricsLrc: lyricsLrc ?? this.lyricsLrc,
       reason: reason ?? this.reason,
+      favoritedAt: favoritedAt ?? this.favoritedAt,
     );
   }
 }
@@ -715,7 +732,7 @@ class Playlist {
 
     final bool isOwner = json['is_owner'] is bool
         ? json['is_owner'] as bool
-        : (json['owner_name'] == null || json['owner_name'].toString().isEmpty);
+        : (json['owner_name'] != 'Deezer');
     final bool isSaved = json['is_saved'] is bool
         ? json['is_saved'] as bool
         : false;

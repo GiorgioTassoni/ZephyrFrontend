@@ -292,7 +292,7 @@ Future<ZephyrAudioHandler?> initAudioService() async {
         androidNotificationChannelName: 'Zephyr Music Playback',
         androidNotificationOngoing: false,
         androidStopForegroundOnPause: true,
-        androidNotificationIcon: 'mipmap/ic_launcher',
+        androidNotificationIcon: 'drawable/ic_notification',
       ),
     );
   } catch (e) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
@@ -9,12 +10,27 @@ import '../providers/player_provider.dart';
 import '../theme/colors.dart';
 import '../widgets/toast.dart';
 import '../widgets/track_tile.dart';
+import '../widgets/track_tile_skeleton.dart';
 
 class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
 
   @override
   ConsumerState<FavoritesScreen> createState() => _FavoritesScreenState();
+}
+
+class _ScrollBubbleData {
+  final bool show;
+  final String text;
+  final double top;
+  final String sortBy;
+
+  const _ScrollBubbleData({
+    this.show = false,
+    this.text = '',
+    this.top = 120.0,
+    this.sortBy = 'date_added',
+  });
 }
 
 class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
@@ -24,6 +40,85 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   String _sortBy = 'date_added'; // 'date_added' | 'title' | 'artist' | 'duration'
   bool _isSearchVisible = false;
   bool _isDownloadingFavorites = false;
+  bool _isDraggingScrollbar = false;
+
+  final ValueNotifier<_ScrollBubbleData> _bubbleNotifier =
+      ValueNotifier(const _ScrollBubbleData());
+  Timer? _bubbleFadeTimer;
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  String _formatMonthYear(DateTime dt) {
+    return '${_months[dt.month - 1]} ${dt.year}';
+  }
+
+  void _onScrollNotification(ScrollNotification notification, List<Track> processedFavorites) {
+    if (processedFavorites.isEmpty || !_isDraggingScrollbar) return;
+
+    final pixels = notification.metrics.pixels;
+    const headerHeight = 280.0;
+    const itemHeight = 64.0;
+
+    final int index = ((pixels - headerHeight) / itemHeight)
+        .floor()
+        .clamp(0, processedFavorites.length - 1);
+    final track = processedFavorites[index];
+
+    String text;
+    switch (_sortBy) {
+      case 'title':
+        final clean = track.title.trim();
+        text = clean.isNotEmpty ? clean[0].toUpperCase() : '#';
+        if (!RegExp(r'[A-Z]').hasMatch(text)) text = '#';
+        break;
+      case 'artist':
+        final clean = track.artists.isNotEmpty ? track.artists.first.trim() : '';
+        text = clean.isNotEmpty ? clean[0].toUpperCase() : '#';
+        if (!RegExp(r'[A-Z]').hasMatch(text)) text = '#';
+        break;
+      case 'duration':
+        final mins = (track.duration?.inSeconds ?? 0) ~/ 60;
+        final secs = (track.duration?.inSeconds ?? 0) % 60;
+        text = '$mins:${secs.toString().padLeft(2, '0')}';
+        break;
+      case 'date_added':
+      default:
+        text = track.favoritedAt != null
+            ? _formatMonthYear(track.favoritedAt!)
+            : 'Liked Songs';
+        break;
+    }
+
+    final viewport = notification.metrics.viewportDimension;
+    final maxScroll = notification.metrics.maxScrollExtent;
+    double targetTop = 120.0;
+    if (maxScroll > 0) {
+      final progress = (pixels / maxScroll).clamp(0.0, 1.0);
+      targetTop = 80.0 + progress * (viewport - 160.0);
+    }
+
+    _bubbleFadeTimer?.cancel();
+    _bubbleNotifier.value = _ScrollBubbleData(
+      show: true,
+      text: text,
+      top: targetTop,
+      sortBy: _sortBy,
+    );
+
+    _bubbleFadeTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (mounted) {
+        _bubbleNotifier.value = _ScrollBubbleData(
+          show: false,
+          text: _bubbleNotifier.value.text,
+          top: _bubbleNotifier.value.top,
+          sortBy: _bubbleNotifier.value.sortBy,
+        );
+      }
+    });
+  }
 
   Future<void> _downloadAllFavorites(List<Track> favorites) async {
     if (favorites.isEmpty) return;
@@ -57,6 +152,8 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
   @override
   void dispose() {
+    _bubbleFadeTimer?.cancel();
+    _bubbleNotifier.dispose();
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -94,7 +191,12 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         break;
       case 'date_added':
       default:
-        // Preserves server order (most recently favorited first)
+        list.sort((a, b) {
+          if (a.favoritedAt != null && b.favoritedAt != null) {
+            return b.favoritedAt!.compareTo(a.favoritedAt!);
+          }
+          return 0; // retain server array order
+        });
         break;
     }
 
@@ -119,14 +221,64 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
-      body: CustomScrollView(
-        key: const PageStorageKey('favorites_custom_scroll_view'),
-        controller: _scrollController,
-        slivers: [
-          // Hero Banner Header
-          SliverToBoxAdapter(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return Listener(
+            onPointerDown: (event) {
+              if (event.localPosition.dx >= constraints.maxWidth - 32) {
+                _isDraggingScrollbar = true;
+              } else {
+                _isDraggingScrollbar = false;
+              }
+            },
+            onPointerUp: (_) {
+              if (_isDraggingScrollbar) {
+                _isDraggingScrollbar = false;
+                _bubbleFadeTimer?.cancel();
+                _bubbleFadeTimer = Timer(const Duration(milliseconds: 250), () {
+                  if (mounted) {
+                    _bubbleNotifier.value = _ScrollBubbleData(
+                      show: false,
+                      text: _bubbleNotifier.value.text,
+                      top: _bubbleNotifier.value.top,
+                      sortBy: _bubbleNotifier.value.sortBy,
+                    );
+                  }
+                });
+              }
+            },
+            onPointerCancel: (_) {
+              _isDraggingScrollbar = false;
+              _bubbleNotifier.value = _ScrollBubbleData(
+                show: false,
+                text: _bubbleNotifier.value.text,
+                top: _bubbleNotifier.value.top,
+                sortBy: _bubbleNotifier.value.sortBy,
+              );
+            },
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (_isDraggingScrollbar &&
+                    (notification is ScrollUpdateNotification ||
+                        notification is ScrollStartNotification)) {
+                  _onScrollNotification(notification, processedFavorites);
+                }
+                return false;
+              },
+              child: Stack(
+                children: [
+                  Scrollbar(
+                    controller: _scrollController,
+                    thumbVisibility: true,
+                    interactive: true,
+                    child: CustomScrollView(
+                      key: const PageStorageKey('favorites_custom_scroll_view'),
+                      controller: _scrollController,
+                      slivers: [
+                  // Hero Banner Header
+                  SliverToBoxAdapter(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
                 final isMobile = constraints.maxWidth < 600;
                 return Container(
                   decoration: BoxDecoration(
@@ -222,7 +374,12 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                         child: InkWell(
                           customBorder: const CircleBorder(),
                           onTap: processedFavorites.isNotEmpty
-                              ? () => playerNotifier.playTrack(processedFavorites.first, processedFavorites)
+                              ? () => playerNotifier.playTrack(
+                                    processedFavorites.first,
+                                    processedFavorites,
+                                    isNewQueue: true,
+                                    origin: 'context',
+                                  )
                               : null,
                           child: const SizedBox(
                             width: 50,
@@ -248,7 +405,12 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                                 if (!playerState.isShuffled) {
                                   playerNotifier.toggleShuffle();
                                 }
-                                playerNotifier.playTrack(processedFavorites.first, processedFavorites);
+                                playerNotifier.playTrack(
+                                  processedFavorites.first,
+                                  processedFavorites,
+                                  isNewQueue: true,
+                                  origin: 'context',
+                                );
                               }
                             : null,
                       ),
@@ -347,9 +509,13 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
           // Main Track List or Empty States
           if (libraryState.favoritesLoading && rawFavorites.isEmpty)
-            const SliverFillRemaining(
-              child: Center(
-                child: CircularProgressIndicator(color: ZephyrColors.primary),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => const TrackTileSkeleton(),
+                  childCount: 12,
+                ),
               ),
             )
           else if (processedFavorites.isEmpty)
@@ -391,55 +557,104 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           else
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              sliver: SliverList(
+              sliver: SliverFixedExtentList(
+                itemExtent: 64.0,
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
-                    if (index == processedFavorites.length) {
-                      if (libraryState.favoritesLoading) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Center(
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                color: ZephyrColors.primary,
-                                strokeWidth: 2,
-                              ),
-                            ),
-                          ),
-                        );
-                      }
-                      if (!libraryState.hasMoreFavorites && rawFavorites.length > 15) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 24),
-                          child: Center(
-                            child: Text(
-                              '${rawFavorites.length} songs loaded',
-                              style: const TextStyle(color: ZephyrColors.textMuted, fontSize: 12),
-                            ),
-                          ),
-                        );
-                      }
-                      return const SizedBox.shrink();
+                    if (index < processedFavorites.length) {
+                      final track = processedFavorites[index];
+                      return TrackTile(
+                        key: ValueKey(track.videoId),
+                        track: track,
+                        queue: processedFavorites,
+                        showFavoriteButton: false,
+                        showDownloadIndicator: true,
+                      );
                     }
 
-                    final track = processedFavorites[index];
+                    if (libraryState.favoritesLoading) {
+                      return const TrackTileSkeleton();
+                    }
 
-                    return TrackTile(
-                      track: track,
-                      queue: processedFavorites,
-                      showFavoriteButton: false,
-                      showDownloadIndicator: true,
-                    );
+                    return const SizedBox.shrink();
                   },
-                  childCount: processedFavorites.length + 1,
+                  childCount: processedFavorites.length +
+                      (libraryState.favoritesLoading ? 1 : 0),
                 ),
               ),
             ),
         ],
       ),
-    );
+    ),
+    if (processedFavorites.isNotEmpty)
+      ValueListenableBuilder<_ScrollBubbleData>(
+        valueListenable: _bubbleNotifier,
+        builder: (context, data, _) {
+          return Positioned(
+            right: 28,
+            top: data.top,
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: data.show ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeOut,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A).withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: ZephyrColors.primary.withValues(alpha: 0.5),
+                      width: 1.2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        data.sortBy == 'date_added'
+                            ? Icons.calendar_today_rounded
+                            : (data.sortBy == 'duration'
+                                ? Icons.timer_outlined
+                                : Icons.sort_by_alpha_rounded),
+                        size: 13,
+                        color: ZephyrColors.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        data.text,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12.5,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ],
+  ),
+),
+);
+},
+),
+);
   }
 
   Widget _buildArtworkCard({required bool isMobile}) {

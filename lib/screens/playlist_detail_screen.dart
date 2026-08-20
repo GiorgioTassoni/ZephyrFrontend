@@ -71,10 +71,14 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
   void _shufflePlayAllTracks() {
     if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
-    final list = List<Track>.from(_playlist!.tracks!)..shuffle();
+    final tracks = _playlist!.tracks!;
+    final playerState = ref.read(playerProvider);
+    if (!playerState.isShuffled) {
+      ref.read(playerProvider.notifier).toggleShuffle();
+    }
     ref.read(playerProvider.notifier).playTrack(
-      list.first,
-      list,
+      tracks.first,
+      tracks,
       isNewQueue: true,
       origin: 'context',
     );
@@ -654,6 +658,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                         onSelected: (val) {
                                           if (val == 'edit') {
                                             _showEditDetailsDialog();
+                                          } else if (val == 'cover') {
+                                            _pickAndUploadCover();
                                           } else if (val == 'delete') {
                                             _deletePlaylist();
                                           } else if (val == 'toggle_save') {
@@ -671,6 +677,16 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                                   Icon(Icons.edit_outlined, size: 20, color: ZephyrColors.textDim),
                                                   SizedBox(width: 8),
                                                   Text('Edit Details'),
+                                                ],
+                                              ),
+                                            ),
+                                            const PopupMenuItem(
+                                              value: 'cover',
+                                              child: Row(
+                                                children: [
+                                                  Icon(Icons.image_outlined, size: 20, color: ZephyrColors.textDim),
+                                                  SizedBox(width: 8),
+                                                  Text('Change Cover Image'),
                                                 ],
                                               ),
                                             ),

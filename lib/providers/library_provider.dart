@@ -107,9 +107,9 @@ class LibraryNotifier extends Notifier<LibraryState> {
       List<Track> favorites = state.favorites;
       int? totalFavs = state.totalFavoritesCount;
       try {
-        final firstPage = await _api.getFavoritesWithCount(offset: 0);
-        favorites = List.from(firstPage.tracks);
-        totalFavs = firstPage.totalCount;
+        final favsResult = await _api.getFavoritesWithCount();
+        favorites = List.from(favsResult.tracks);
+        totalFavs = favsResult.totalCount;
       } catch (_) {}
 
       List<HistoryEntry> history = state.history;
@@ -153,11 +153,15 @@ class LibraryNotifier extends Notifier<LibraryState> {
       enrichedHistoryList
           .sort((a, b) => b.listenedAt.compareTo(a.listenedAt));
 
+      final bool hasMoreFavs = totalFavs != null && favorites.length < totalFavs && favorites.length >= LibraryState._pageSize;
+
       state = LibraryState(
         downloadedTracks: tracks,
         playlists: playlists,
         favorites: favorites,
         totalFavoritesCount: totalFavs,
+        favoritesOffset: favorites.length,
+        hasMoreFavorites: hasMoreFavs,
         history: enrichedHistoryList,
         isLoading: false,
       );
@@ -232,19 +236,18 @@ class LibraryNotifier extends Notifier<LibraryState> {
   Future<void> loadFavorites() async {
     state = state.copyWith(
       favoritesLoading: true,
-      hasMoreFavorites: true,
+      hasMoreFavorites: false,
       favoritesOffset: 0,
     );
     try {
-      final firstPage = await _api.getFavoritesWithCount(offset: 0);
-      final List<Track> tracks = List.from(firstPage.tracks);
-      final bool hasMore = tracks.length < firstPage.totalCount && firstPage.tracks.length >= LibraryState._pageSize;
+      final favsResult = await _api.getFavoritesWithCount();
+      final List<Track> tracks = List.from(favsResult.tracks);
 
       state = state.copyWith(
         favorites: tracks,
-        totalFavoritesCount: firstPage.totalCount,
+        totalFavoritesCount: favsResult.totalCount,
         favoritesOffset: tracks.length,
-        hasMoreFavorites: hasMore,
+        hasMoreFavorites: false,
         favoritesLoading: false,
       );
     } catch (e) {
@@ -261,14 +264,20 @@ class LibraryNotifier extends Notifier<LibraryState> {
     if (state.favoritesLoading || !state.hasMoreFavorites) return;
     state = state.copyWith(favoritesLoading: true);
     try {
-      final page = await _api.getFavoritesWithCount(offset: state.favoritesOffset);
-      final merged = [...state.favorites, ...page.tracks];
+      final currentOffset = state.favorites.length;
+      final page = await _api.getFavoritesWithCount(offset: currentOffset);
+
+      final existingIds = state.favorites.map((t) => t.videoId).toSet();
+      final newUniqueTracks = page.tracks.where((t) => !existingIds.contains(t.videoId)).toList();
+      final merged = [...state.favorites, ...newUniqueTracks];
+
+      final bool hasMore = page.tracks.isNotEmpty && (merged.length < page.totalCount);
       state = state.copyWith(
         favorites: merged,
         totalFavoritesCount: page.totalCount,
         favoritesLoading: false,
         favoritesOffset: merged.length,
-        hasMoreFavorites: merged.length < page.totalCount && page.tracks.length >= LibraryState._pageSize,
+        hasMoreFavorites: hasMore,
       );
     } catch (e) {
       state = state.copyWith(
@@ -568,11 +577,12 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }) async {
     try {
       if (scope == 'favorites') {
-        final page = await _api.getFavorites(offset: 0);
+        final allFavs = await _api.getFavorites();
         state = state.copyWith(
-          favorites: page,
-          favoritesOffset: page.length,
-          hasMoreFavorites: page.length >= LibraryState._pageSize,
+          favorites: allFavs,
+          totalFavoritesCount: allFavs.length,
+          favoritesOffset: allFavs.length,
+          hasMoreFavorites: false,
         );
       } else if (scope == 'playlists') {
         final playlists = await _api.getPlaylists();

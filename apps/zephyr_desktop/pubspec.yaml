@@ -14,7 +14,6 @@ dependencies:
   flutter_riverpod: ^3.3.2
   ffi: ^2.1.2
   dbus: ^0.7.10
-  mpris: ^1.1.0
   zephyr_core:
     path: ../../packages/zephyr_core
 

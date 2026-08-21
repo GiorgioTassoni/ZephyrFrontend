@@ -2,11 +2,21 @@
 
 This document is the comprehensive guide to the architecture, classes, state management, and operational contracts of the **Zephyr Flutter Frontend**. It is designed to give AI agents and human engineers full clarity on how the client application is structured and how its subsystems interact.
 
+### Repository Layout (monorepo)
+
+```
+packages/zephyr_core/   # Shared code: api/, models/, providers/, screens/, widgets/, utils/, theme/
+apps/zephyr_mobile/     # Android app shell (audio_service bootstrap)
+apps/zephyr_desktop/    # Linux + Windows app shell (MPRIS via MediaControls seam)
+```
+
+Each shell is its own Flutter project depending on `zephyr_core` by path. Platform-specific integrations are registered at startup through seams in core (e.g. `MediaControlsService`); shared code contains no `Platform.is*` branching for OS-specific services. Build each app from inside its folder (`flutter build linux` in `apps/zephyr_desktop`, `flutter build apk` in `apps/zephyr_mobile`).
+
 ---
 
 ## 1. High-Level Architecture
 
-Zephyr is a cross-platform music streaming and personal library application built with **Flutter** (supporting Linux desktop, Android, iOS, and Web).
+Zephyr is a cross-platform music streaming and personal library application built with **Flutter** (supporting Linux desktop and Android).
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -22,8 +32,8 @@ Zephyr is a cross-platform music streaming and personal library application buil
 ┌───────────────────▼─────────────┐   ┌─────────────▼────────────────────┐
 │      Audio Playback Engine      │   │          API & Network           │
 │  ZephyrAudioHandler (just_audio)│   │  ZephyrApi (Dio + Auth Intercept)│
-│  LinuxMprisService (D-Bus MPRIS)│   │  Local Proxy (Header Injection)  │
-│  WebMediaSession (MediaSession) │   │  SSE Stream (State, Tracks, Lib) │
+│  MprisMediaControls (D-Bus MPRIS,│   │  Local Proxy (Header Injection)  │
+│    desktop shell only)          │   │  SSE Stream (State, Tracks, Lib) │
 └─────────────────────────────────┘   └──────────────────────────────────┘
 ```
 
@@ -33,7 +43,7 @@ Zephyr is a cross-platform music streaming and personal library application buil
 - **Audio Output**: 
   - `just_audio` via `ZephyrAudioHandler` (`audio_service`) for mobile background audio, lockscreen metadata, and notification controls.
   - `audioplayers` fallback.
-  - `LinuxMprisService` for Linux desktop media keys (D-Bus MPRIS protocol).
+  - `MprisMediaControls` (desktop shell) for Linux desktop media keys (D-Bus MPRIS protocol), registered via the `MediaControlsService` seam in zephyr_core.
 - **Security Standard (S-03)**: Auth tokens are **never passed as URL query parameters**. A local loopback HTTP proxy (`http://localhost:<port>/stream/<id>`) injects the `Authorization: Bearer <token>` header dynamically into audio stream requests.
 
 ---
@@ -97,10 +107,9 @@ lib/
 │   └── zephyr_theme.dart       # Flutter ThemeData, typography, button styles
 ├── utils/
 │   ├── audio_handler.dart      # Background audio_service & MediaSession handler
-│   ├── mpris_service.dart      # Linux desktop D-Bus MPRIS media key integration
+│   ├── media_controls.dart     # MediaControlsService seam (shells register MPRIS etc.)
 │   ├── device_info.dart        # Device ID & device name discovery
-│   ├── root_navigator.dart     # Global root navigator key for dialogs
-│   └── web_media_session.dart  # Web MediaSession API stubs/implementation
+│   └── root_navigator.dart     # Global root navigator key for dialogs
 └── widgets/
     ├── track_tile.dart         # Standard track row with context menu, hover, play state
     ├── mini_player.dart        # Bottom persistent player bar

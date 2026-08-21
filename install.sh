@@ -6,15 +6,16 @@ APP_ID="com.giorgiotassoni.zephyr"
 BINARY_NAME="frontend"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-Preview}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="${SCRIPT_DIR}/apps/zephyr_desktop"
+DEFAULT_BUNDLE="${APP_ROOT}/build/linux/x64/release/bundle"
 INSTALL_DIR="${ZEPHYR_INSTALL_DIR:-${HOME}/.local/opt/zephyr}"
 BIN_DIR="${HOME}/.local/bin"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
 DESKTOP_FILE="${APPLICATIONS_DIR}/${APP_ID}.desktop"
 LAUNCHER="${BIN_DIR}/zephyr"
-DEFAULT_BUNDLE="${SCRIPT_DIR}/build/linux/x64/release/bundle"
 APP_VERSION="unknown"
-if [[ -f "${SCRIPT_DIR}/pubspec.yaml" ]]; then
-  APP_VERSION="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' "${SCRIPT_DIR}/pubspec.yaml" | head -n 1 || true)"
+if [[ -f "${APP_ROOT}/pubspec.yaml" ]]; then
+  APP_VERSION="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' "${APP_ROOT}/pubspec.yaml" | head -n 1 || true)"
   APP_VERSION="${APP_VERSION:-unknown}"
 fi
 DISPLAY_VERSION="v${APP_VERSION} ${RELEASE_CHANNEL}"
@@ -25,10 +26,11 @@ Usage:
   ./install.sh [bundle-directory]
   ./install.sh --uninstall
 
-The installer uses build/linux/x64/release/bundle by default. Set
-ZEPHYR_INSTALL_DIR to choose a different user-local installation directory.
-If the bundle is missing and Flutter is available, the script builds it with
-RELEASE_CHANNEL (default: Preview) before installing it.
+The installer uses apps/zephyr_desktop/build/linux/x64/release/bundle by
+default. Set ZEPHYR_INSTALL_DIR to choose a different user-local
+installation directory. If the bundle is missing and Flutter is available,
+the script builds it with RELEASE_CHANNEL (default: Preview) before
+installing it.
 EOF
 }
 
@@ -65,10 +67,10 @@ BUNDLE_DIR="${1:-${DEFAULT_BUNDLE}}"
 BINARY_PATH="${BUNDLE_DIR}/${BINARY_NAME}"
 
 if [[ ! -x "${BINARY_PATH}" ]]; then
-  if command -v flutter >/dev/null 2>&1 && [[ -f "${SCRIPT_DIR}/pubspec.yaml" ]]; then
+  if command -v flutter >/dev/null 2>&1 && [[ -f "${APP_ROOT}/pubspec.yaml" ]]; then
     echo "Linux release bundle not found; building ${APP_NAME} (${RELEASE_CHANNEL})..."
     (
-      cd -- "${SCRIPT_DIR}"
+      cd -- "${APP_ROOT}"
       flutter build linux --release --dart-define="RELEASE_CHANNEL=${RELEASE_CHANNEL}"
     )
     BUNDLE_DIR="${DEFAULT_BUNDLE}"

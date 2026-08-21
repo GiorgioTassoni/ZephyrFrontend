@@ -43,3 +43,10 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Monorepo build artifacts
+build/
+.pi/tasks/
+**/android/.gradle/
+**/android/.kotlin/
+**/android/local.properties

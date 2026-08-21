@@ -6,6 +6,8 @@ APP_ID="com.giorgiotassoni.zephyr"
 BINARY_NAME="frontend"
 RELEASE_CHANNEL="${RELEASE_CHANNEL:-Preview}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="${SCRIPT_DIR}/apps/zephyr_desktop"
+DEFAULT_BUNDLE="${APP_ROOT}/build/linux/x64/release/bundle"
 INSTALL_DIR="${ZEPHYR_INSTALL_DIR:-${HOME}/.local/opt/zephyr}"
 BIN_DIR="${HOME}/.local/bin"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
@@ -19,8 +21,10 @@ Usage:
   ./installSameFolder.sh --uninstall
 
 The script expects either:
-  1. A bundle/ directory beside this script, or
-  2. frontend, data/, and lib/ beside this script.
+  1. A bundle/ directory beside this script,
+  2. frontend, data/, and lib/ beside this script, or
+  3. A freshly built Flutter bundle at
+     apps/zephyr_desktop/build/linux/x64/release/bundle.
 
 The bundle is installed to ~/.local/opt/zephyr. Set ZEPHYR_INSTALL_DIR to
 choose a different user-local installation directory.
@@ -60,9 +64,12 @@ if [[ -x "${SCRIPT_DIR}/bundle/${BINARY_NAME}" ]]; then
   BUNDLE_DIR="${SCRIPT_DIR}/bundle"
 elif [[ -x "${SCRIPT_DIR}/${BINARY_NAME}" ]]; then
   BUNDLE_DIR="${SCRIPT_DIR}"
+elif [[ -x "${DEFAULT_BUNDLE}/${BINARY_NAME}" ]]; then
+  BUNDLE_DIR="${DEFAULT_BUNDLE}"
 else
   echo "Could not find a Linux bundle beside ${BASH_SOURCE[0]}." >&2
-  echo "Expected bundle/frontend or frontend beside the installer." >&2
+  echo "Expected bundle/frontend or frontend beside the installer, or a built" >&2
+  echo "bundle at ${DEFAULT_BUNDLE}." >&2
   exit 1
 fi
 
@@ -79,8 +86,8 @@ if pgrep -x "${BINARY_NAME}" >/dev/null 2>&1; then
 fi
 
 APP_VERSION="unknown"
-if [[ -f "${SCRIPT_DIR}/pubspec.yaml" ]]; then
-  APP_VERSION="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' "${SCRIPT_DIR}/pubspec.yaml" | head -n 1 || true)"
+if [[ -f "${APP_ROOT}/pubspec.yaml" ]]; then
+  APP_VERSION="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' "${APP_ROOT}/pubspec.yaml" | head -n 1 || true)"
   APP_VERSION="${APP_VERSION:-unknown}"
 fi
 DISPLAY_VERSION="v${APP_VERSION} ${RELEASE_CHANNEL}"

@@ -1,0 +1,16 @@
+{
+  "id": "b7f822c9f",
+  "name": "Build Android APK",
+  "command": "cd /home/GioViale/Projects/Flutter/ZephyrFronted/apps/zephyr_mobile && flutter build apk --debug 2>&1 | tail -20",
+  "status": "running",
+  "outputPath": ".pi/tasks/session-296522-296522/b7f822c9f.output",
+  "cwd": "/home/GioViale/Projects/Flutter/ZephyrFronted",
+  "startTime": 1787354386374,
+  "pid": 309426,
+  "bytesWritten": 0,
+  "isAgent": false,
+  "notified": false,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 1200
+}

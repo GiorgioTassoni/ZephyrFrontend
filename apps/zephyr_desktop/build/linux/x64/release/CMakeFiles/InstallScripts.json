@@ -1,0 +1,12 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/GioViale/Projects/Flutter/ZephyrFronted/apps/zephyr_desktop/build/linux/x64/release/cmake_install.cmake",
+		"/home/GioViale/Projects/Flutter/ZephyrFronted/apps/zephyr_desktop/build/linux/x64/release/flutter/cmake_install.cmake",
+		"/home/GioViale/Projects/Flutter/ZephyrFronted/apps/zephyr_desktop/build/linux/x64/release/runner/cmake_install.cmake",
+		"/home/GioViale/Projects/Flutter/ZephyrFronted/apps/zephyr_desktop/build/linux/x64/release/plugins/audioplayers_linux/cmake_install.cmake",
+		"/home/GioViale/Projects/Flutter/ZephyrFronted/apps/zephyr_desktop/build/linux/x64/release/plugins/jni/cmake_install.cmake",
+		"/home/GioViale/Projects/Flutter/ZephyrFronted/apps/zephyr_desktop/build/linux/x64/release/plugins/jni/shared/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

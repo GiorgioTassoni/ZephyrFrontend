@@ -7,6 +7,7 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:just_audio/just_audio.dart';
 import '../models/models.dart';
 import '../api/zephyr_api.dart';
+import 'app_logger.dart';
 import 'offline_storage.dart';
 
 /// Global AudioHandler instance for Zephyr Music Player.
@@ -262,6 +263,11 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     _stallRecoveryTimer = null;
     try {
       setTrackMediaItem(track, apiBaseUrl);
+      AppLogger.instance.logPlayer('audio_handler_play_url', data: {
+        'title': track.title,
+        'videoId': track.videoId,
+        'initialPosMs': initialPosition?.inMilliseconds,
+      });
       // The caller applies the current volume before this method. Reapplying
       // the player's existing value after replacing the source keeps Linux
       // stream volume from falling back to the native default on each track.
@@ -275,12 +281,13 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
       }
       await _player.play();
 
-      // On Linux, if GStreamer opened an HTTP stream for a completed track but stalled at 0:00,
+      // On Linux only, if GStreamer opened an HTTP stream for a completed track but stalled at 0:00,
       // this watchdog recovers the pipeline.
-      if (track.downloadStatus == 'completed' || track.isDownloaded) {
+      if (!kIsWeb && Platform.isLinux && (track.downloadStatus == 'completed' || track.isDownloaded)) {
         _stallRecoveryTimer = Timer(const Duration(seconds: 3), () async {
           if (_player.playing && _player.position == Duration.zero) {
             try {
+              AppLogger.instance.logPlayer('linux_pipeline_stall_recovery', data: {'videoId': track.videoId});
               debugPrint('ZephyrAudioHandler: Stall detected at 0:00, recovering pipeline...');
               await _player.setUrl(url);
               if (initialPosition != null && initialPosition > Duration.zero) {
@@ -292,6 +299,7 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
         });
       }
     } catch (e) {
+      AppLogger.instance.logPlayer('audio_handler_play_error', data: {'error': e.toString()});
       debugPrint('ZephyrAudioHandler playUrl error: $e');
       rethrow;
     }
@@ -308,6 +316,11 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     _stallRecoveryTimer = null;
     try {
       setTrackMediaItem(track, apiBaseUrl);
+      AppLogger.instance.logPlayer('audio_handler_play_local_file', data: {
+        'title': track.title,
+        'videoId': track.videoId,
+        'filePath': filePath,
+      });
       await _player.setVolume(_player.volume);
       await _player.setFilePath(filePath);
       if (initialPosition != null && initialPosition > Duration.zero) {
@@ -315,6 +328,7 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
       }
       await _player.play();
     } catch (e) {
+      AppLogger.instance.logPlayer('audio_handler_local_file_error', data: {'error': e.toString()});
       debugPrint('ZephyrAudioHandler playFilePath error: $e');
       rethrow;
     }
@@ -323,6 +337,7 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> play() async {
     try {
+      AppLogger.instance.logPlayer('audio_handler_play');
       await _player.play();
     } catch (_) {}
   }
@@ -332,6 +347,7 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     _stallRecoveryTimer?.cancel();
     _stallRecoveryTimer = null;
     try {
+      AppLogger.instance.logPlayer('audio_handler_pause');
       await _player.pause();
     } catch (_) {}
   }
@@ -342,6 +358,7 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     _stallRecoveryTimer = null;
     _wasPlayingBeforeInterruption = false;
     try {
+      AppLogger.instance.logPlayer('audio_handler_stop');
       await _player.stop();
     } catch (_) {}
     playbackState.add(
@@ -360,17 +377,20 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> seek(Duration position) async {
     try {
+      AppLogger.instance.logPlayer('audio_handler_seek', data: {'posMs': position.inMilliseconds});
       await _player.seek(position);
     } catch (_) {}
   }
 
   @override
   Future<void> skipToNext() async {
+    AppLogger.instance.logQueue('audio_handler_skip_next');
     onSkipNext?.call();
   }
 
   @override
   Future<void> skipToPrevious() async {
+    AppLogger.instance.logQueue('audio_handler_skip_previous');
     onSkipPrevious?.call();
   }
 

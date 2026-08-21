@@ -72,9 +72,9 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   @override
   LibraryState build() {
-    final authState = ref.watch(authProvider);
+    final isAuthenticated = ref.watch(authProvider.select((s) => s.isAuthenticated));
 
-    if (!authState.isAuthenticated) {
+    if (!isAuthenticated) {
       return LibraryState();
     }
     Future.microtask(() => loadLibrary());
@@ -82,7 +82,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
   }
 
   Future<void> loadLibrary({bool quiet = false}) async {
-    if (!quiet) {
+    if (!quiet && state.favorites.isEmpty && state.playlists.isEmpty) {
       state = state.copyWith(isLoading: true, errorMessage: null);
     }
     unawaited(flushOfflineHistory());

@@ -11,6 +11,7 @@ import 'screens/change_password_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_layout.dart';
 import 'theme/colors.dart';
+import 'utils/app_logger.dart';
 import 'utils/audio_handler.dart';
 import 'utils/root_navigator.dart';
 
@@ -52,6 +53,7 @@ void _disableGStreamerVideoSink() {
 void main(List<String> args) async {
   _disableGStreamerVideoSink();
   WidgetsFlutterBinding.ensureInitialized();
+  await AppLogger.instance.init();
   SystemChrome.setEnabledSystemUIMode(
     SystemUiMode.manual,
     overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],
@@ -97,8 +99,25 @@ class ZephyrApp extends ConsumerStatefulWidget {
   ConsumerState<ZephyrApp> createState() => _ZephyrAppState();
 }
 
-class _ZephyrAppState extends ConsumerState<ZephyrApp> {
+class _ZephyrAppState extends ConsumerState<ZephyrApp> with WidgetsBindingObserver {
   bool _handledInitialDeepLink = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    AppLogger.instance.logLifecycle(state.name);
+  }
 
   void _handleDeepLink(String videoId) async {
     if (_handledInitialDeepLink) return;
@@ -116,21 +135,23 @@ class _ZephyrAppState extends ConsumerState<ZephyrApp> {
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authProvider);
+    final isAuthenticated = ref.watch(authProvider.select((s) => s.isAuthenticated));
+    final isLoading = ref.watch(authProvider.select((s) => s.isLoading));
+    final mustChangePassword = ref.watch(authProvider.select((s) => s.mustChangePassword));
 
-    if (authState.isAuthenticated && widget.initialVideoId != null) {
+    if (isAuthenticated && widget.initialVideoId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _handleDeepLink(widget.initialVideoId!);
       });
     }
 
     Widget homeWidget;
-    if (authState.isLoading) {
+    if (isLoading) {
       homeWidget = const ZephyrSplash();
-    } else if (authState.isAuthenticated && authState.mustChangePassword) {
+    } else if (isAuthenticated && mustChangePassword) {
       // S-07: block all navigation until password rotation is done
       homeWidget = const ChangePasswordScreen();
-    } else if (authState.isAuthenticated) {
+    } else if (isAuthenticated) {
       homeWidget = const MainLayout();
     } else {
       homeWidget = const LoginScreen();

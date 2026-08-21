@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/models.dart';
+import '../utils/app_logger.dart';
 
 class PlayerActiveException implements Exception {
   final String ownerDeviceId;
@@ -136,6 +137,7 @@ class ZephyrApi {
   }
 
   Future<bool> _executeRefresh() async {
+    AppLogger.instance.logAuth('token_refresh_triggered');
     try {
       final response = await _dio.post(
         '/api/auth/refresh',
@@ -148,11 +150,14 @@ class ZephyrApi {
           accessToken: newAccess,
           refreshToken: data['refresh_token'] as String,
         );
+        AppLogger.instance.logAuth('token_refresh_success');
         onTokenRefreshed?.call(newAccess);
         return true;
       }
+      AppLogger.instance.logAuth('token_refresh_failed', data: {'reason': 'missing_tokens_in_payload'});
       return false;
-    } catch (_) {
+    } catch (e) {
+      AppLogger.instance.logAuth('token_refresh_failed', data: {'error': e.toString()});
       return false;
     }
   }
@@ -518,6 +523,7 @@ class ZephyrApi {
     bool? isPlaying,
     String? queueMode,
     List<Map<String, dynamic>>? queue,
+    List<Map<String, dynamic>>? userQueue,
     String? origin,
   }) async {
     try {
@@ -529,6 +535,7 @@ class ZephyrApi {
       if (isPlaying != null) body['is_playing'] = isPlaying;
       if (queueMode != null) body['queue_mode'] = queueMode;
       if (queue != null) body['queue'] = queue;
+      if (userQueue != null) body['user_queue'] = userQueue;
       if (origin != null && (origin == 'queue' || origin == 'context')) {
         body['origin'] = origin;
       }

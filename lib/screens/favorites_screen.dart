@@ -216,15 +216,15 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final libraryState = ref.watch(libraryProvider);
-    final authState = ref.watch(authProvider);
+    final rawFavorites = ref.watch(libraryProvider.select((s) => s.favorites));
+    final totalFavoritesCount = ref.watch(libraryProvider.select((s) => s.effectiveFavoritesCount));
+    final favoritesLoading = ref.watch(libraryProvider.select((s) => s.favoritesLoading));
+    final username = ref.watch(authProvider.select((s) => s.username ?? 'User'));
     final navNotifier = ref.read(navigationProvider.notifier);
     final isShuffled = ref.watch(playerProvider.select((s) => s.isShuffled));
     final playerNotifier = ref.read(playerProvider.notifier);
 
-    final rawFavorites = libraryState.favorites;
     final processedFavorites = _getProcessedFavorites(rawFavorites);
-    final username = authState.username ?? 'User';
 
     final offlineState = ref.watch(offlineDownloadsProvider);
     final bool allFavoritesDownloaded = rawFavorites.isNotEmpty &&
@@ -362,7 +362,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                             _buildArtworkCard(isMobile: true),
                             const SizedBox(width: 16),
                             Expanded(
-                              child: _buildHeaderDetails(username, isMobile: true, totalCount: libraryState.effectiveFavoritesCount),
+                              child: _buildHeaderDetails(username, isMobile: true, totalCount: totalFavoritesCount),
                             ),
                           ],
                         )
@@ -373,7 +373,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                             _buildArtworkCard(isMobile: false),
                             const SizedBox(width: 24),
                             Expanded(
-                              child: _buildHeaderDetails(username, isMobile: false, totalCount: libraryState.effectiveFavoritesCount),
+                              child: _buildHeaderDetails(username, isMobile: false, totalCount: totalFavoritesCount),
                             ),
                           ],
                         ),
@@ -539,7 +539,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           ),
 
           // Main Track List or Empty States
-          if (libraryState.favoritesLoading && rawFavorites.isEmpty)
+          if (favoritesLoading && rawFavorites.isEmpty)
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               sliver: SliverList(
@@ -603,14 +603,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                       );
                     }
 
-                    if (libraryState.favoritesLoading) {
+                    if (favoritesLoading) {
                       return const TrackTileSkeleton();
                     }
 
                     return const SizedBox.shrink();
                   },
                   childCount: processedFavorites.length +
-                      (libraryState.favoritesLoading ? 1 : 0),
+                      (favoritesLoading ? 1 : 0),
                 ),
               ),
             ),

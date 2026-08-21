@@ -84,8 +84,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   Widget build(BuildContext context) {
     final navState = ref.watch(navigationProvider);
     final navNotifier = ref.read(navigationProvider.notifier);
-    final authState = ref.watch(authProvider);
-    final libraryState = ref.watch(libraryProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
 
     // Resolve main screen widget
@@ -295,7 +293,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             },
             child: Scaffold(
               backgroundColor: ZephyrColors.bgDark,
-              bottomNavigationBar: isMobile
+              bottomNavigationBar: (isMobile &&
+                      navState.currentScreen.type != ScreenType.lyrics)
                   ? BottomNavigationBar(
                       currentIndex: getMobileNavIndex(
                         navState.currentScreen.type,
@@ -364,8 +363,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                             context,
                             ref,
                             navState,
-                            authState,
-                            libraryState,
                           ),
                           Container(width: 1, color: ZephyrColors.bgLight),
                         ],
@@ -380,7 +377,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                                 ref,
                                 navNotifier,
                                 navState,
-                                authState,
                               ),
 
                               // Sub-header divider
@@ -422,8 +418,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                     ),
                   ),
 
-                  // Horizontal divider above player
-                  Container(height: 1, color: ZephyrColors.bgLight),
+                  // Horizontal divider above player (hidden when in fullscreen lyrics)
+                  if (navState.currentScreen.type != ScreenType.lyrics)
+                    Container(height: 1, color: ZephyrColors.bgLight),
 
                   // Bottom Player Bar
                   _PlayerBarWidget(parentState: this),
@@ -440,10 +437,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     BuildContext context,
     WidgetRef ref,
     NavigationState navState,
-    AuthState authState,
-    LibraryState libraryState,
   ) {
     final navNotifier = ref.read(navigationProvider.notifier);
+    final playlists = ref.watch(libraryProvider.select((s) => s.playlists));
 
     return Container(
       width: 240,
@@ -553,7 +549,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
 
           // Playlists List (Top 4 Recent Playlists + See All Affordance)
           Expanded(
-            child: libraryState.playlists.isEmpty
+            child: playlists.isEmpty
                 ? const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     child: Text(
@@ -566,10 +562,10 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   )
                 : Builder(
                     builder: (context) {
-                      final recentPlaylists = libraryState.playlists
+                      final recentPlaylists = playlists
                           .take(4)
                           .toList();
-                      final hasMore = libraryState.playlists.length > 4;
+                      final hasMore = playlists.length > 4;
 
                       return ListView(
                         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -642,8 +638,10 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     WidgetRef ref,
     NavigationNotifier navNotifier,
     NavigationState navState,
-    AuthState authState,
   ) {
+    final username = ref.watch(authProvider.select((s) => s.username ?? 'User'));
+    final isAdmin = ref.watch(authProvider.select((s) => s.isAdmin));
+    final isCurator = ref.watch(authProvider.select((s) => s.isCurator));
     Widget buildCircleArrowButton(
       IconData icon,
       bool enabled,
@@ -667,6 +665,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     }
 
     final isMobile = MediaQuery.of(context).size.width < 700;
+    if (isMobile && navState.currentScreen.type == ScreenType.lyrics) {
+      return const SizedBox.shrink();
+    }
 
     final topInset = MediaQuery.of(context).padding.top;
 
@@ -755,7 +756,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   ],
                 ),
               ),
-              if (authState.isAdmin)
+              if (isAdmin)
                 const PopupMenuItem(
                   value: 'admin',
                   child: Row(
@@ -770,7 +771,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                     ],
                   ),
                 ),
-              if (authState.isCurator)
+              if (isCurator)
                 const PopupMenuItem(
                   value: 'curator',
                   child: Row(
@@ -824,7 +825,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    authState.username ?? 'User',
+                    username,
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -2191,6 +2192,12 @@ class _PlayerBarWidget extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isLyricsScreen = ref.watch(
+      navigationProvider.select((s) => s.currentScreen.type == ScreenType.lyrics),
+    );
+    if (isLyricsScreen) {
+      return const SizedBox.shrink();
+    }
     final playerState = ref.watch(playerProvider);
     final playerNotifier = ref.read(playerProvider.notifier);
     return parentState._buildPlayerBar(context, ref, playerState, playerNotifier);

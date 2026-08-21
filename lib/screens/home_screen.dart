@@ -165,8 +165,7 @@ class HomeScreen extends ConsumerWidget {
     LibraryState state,
     NavigationNotifier navNotifier,
   ) {
-    final authState = ref.watch(authProvider);
-    final isAdmin = authState.isAdmin;
+    final isAdmin = ref.watch(authProvider.select((s) => s.isAdmin));
 
     // Generate quick items: favorites, history, and up to 4 playlists
     final items = <Widget>[];

@@ -3,7 +3,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
-import '../providers/auth_provider.dart';
 import '../theme/colors.dart';
 import '../providers/library_provider.dart';
 
@@ -117,8 +116,8 @@ class _CoverImageState extends ConsumerState<CoverImage> {
 
   @override
   Widget build(BuildContext context) {
-    final token = ref.watch(authProvider).token;
     final api = ZephyrApi();
+    final token = api.token;
 
     Widget placeholder = Container(
       width: widget.size,

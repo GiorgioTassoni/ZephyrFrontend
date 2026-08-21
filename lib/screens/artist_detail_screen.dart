@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../providers/navigation_provider.dart';
-import '../providers/library_provider.dart';
 import '../theme/colors.dart';
 import '../theme/zephyr_theme.dart';
 import '../widgets/album_card.dart';
@@ -55,7 +54,6 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(libraryProvider);
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator(color: ZephyrColors.primary));
     }
@@ -81,6 +79,7 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
       return const Center(child: Text('Artist not found'));
     }
 
+    final isMobile = MediaQuery.of(context).size.width < 700;
     final topSongs = _artist!.topSongs ?? [];
     final albums = _artist!.albums ?? [];
     final singles = _artist!.singles ?? [];
@@ -101,7 +100,7 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
               Stack(
                 children: [
                   Container(
-                    height: 280,
+                    height: isMobile ? 240 : 280,
                     width: double.infinity,
                     decoration: BoxDecoration(
                       image: _artist!.coverUrl != null && _artist!.coverUrl!.isNotEmpty
@@ -142,10 +141,28 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                       ),
                     ),
                   ),
+                  // Back Button
                   Positioned(
-                    bottom: 24,
-                    left: 32,
-                    right: 32,
+                    top: MediaQuery.of(context).padding.top + 8,
+                    left: 16,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black.withValues(alpha: 0.45),
+                      ),
+                      onPressed: () {
+                        if (navNotifier.canGoBack) {
+                          navNotifier.navigateBack();
+                        } else {
+                          navNotifier.navigateTo(const ScreenState(type: ScreenType.home));
+                        }
+                      },
+                    ),
+                  ),
+                  Positioned(
+                    bottom: isMobile ? 16 : 24,
+                    left: isMobile ? 16 : 32,
+                    right: isMobile ? 16 : 32,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -176,38 +193,40 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                         const SizedBox(height: 8),
                         Text(
                           _artist!.name,
-                          style: const TextStyle(
-                            fontSize: 48,
+                          style: TextStyle(
+                            fontSize: isMobile ? 32 : 48,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
-                            letterSpacing: -1.5,
+                            letterSpacing: -1.0,
                           ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 8),
                         Row(
                           children: [
                             if (_artist!.fans != null) ...[
                               Text(
                                 '${_artist!.fans} fans',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
                               ),
                               const SizedBox(width: 16),
                             ] else if (_artist!.monthlyListeners != null) ...[
                               Text(
                                 '${_artist!.monthlyListeners} monthly listeners',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
                               ),
                               const SizedBox(width: 16),
                             ],
                             if (_artist!.albumCount != null) ...[
                               Text(
                                 '${_artist!.albumCount} albums',
-                                style: const TextStyle(color: ZephyrColors.textDim),
+                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                               ),
                             ] else if (_artist!.subscribers != null) ...[
                               Text(
                                 '${_artist!.subscribers} subscribers',
-                                style: const TextStyle(color: ZephyrColors.textDim),
+                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
                               ),
                             ],
                           ],
@@ -219,7 +238,10 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
               ),
               
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 24.0),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 14.0 : 32.0,
+                  vertical: isMobile ? 16.0 : 24.0,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -229,30 +251,47 @@ class _ArtistDetailScreenState extends ConsumerState<ArtistDetailScreen> {
                         'Popular',
                         style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: ZephyrColors.text),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       ListView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: topSongs.length.clamp(0, 5),
                         itemBuilder: (context, index) {
                           final track = topSongs[index];
-                          return Row(
-                            children: [
-                              SizedBox(
-                                width: 32,
-                                child: Text(
-                                  '${index + 1}',
-                                  style: const TextStyle(color: ZephyrColors.textDim),
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2.0),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: isMobile ? 22 : 32,
+                                  child: Text(
+                                    '${index + 1}',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: ZephyrColors.textDim,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              Expanded(
-                                child: TrackTile(track: track, queue: topSongs),
-                              ),
-                            ],
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: TrackTile(
+                                    track: track,
+                                    queue: topSongs,
+                                    showDownloadIndicator: false,
+                                    showFavoriteButton: true,
+                                    contentPadding: isMobile
+                                        ? const EdgeInsets.symmetric(horizontal: 4, vertical: 2)
+                                        : const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                  ),
+                                ),
+                              ],
+                            ),
                           );
                         },
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 32),
                     ],
 
                     // Albums Section

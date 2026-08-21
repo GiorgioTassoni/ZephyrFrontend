@@ -56,16 +56,19 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     final libraryNotifier = ref.read(libraryProvider.notifier);
     final isFav = libraryNotifier.isFavorite(widget.track.videoId, title: widget.track.title, artists: widget.track.artists);
 
+    final isMobile = MediaQuery.of(context).size.width < 700;
+
     final tile = GestureDetector(
       onSecondaryTapDown: (details) {
         _showRightClickMenu(context, ref, details.globalPosition);
       },
+      onLongPress: () => _showMobileActionsBottomSheet(context, ref),
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(8),
         clipBehavior: Clip.antiAlias,
         child: ListTile(
-          contentPadding: widget.contentPadding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          contentPadding: widget.contentPadding ?? EdgeInsets.symmetric(horizontal: isMobile ? 8 : 16, vertical: 4),
           leading: CoverImage(
             videoId: widget.track.videoId,
             coverUrl: widget.track.coverUrl,
@@ -116,24 +119,35 @@ class _TrackTileState extends ConsumerState<TrackTile> {
               fontSize: 12,
             ),
           ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.showDownloadIndicator) _buildDownloadIndicator(context, ref),
-              if (widget.showFavoriteButton)
-                FavoriteButton(
-                  isFavorite: isFav,
-                  size: 20,
-                  onTap: () => libraryNotifier.toggleFavorite(widget.track),
-                ),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim),
-                color: ZephyrColors.bgCard,
-                onSelected: (value) => _handleMenuSelection(context, ref, value),
-                itemBuilder: (context) => _buildTrackMenuItems(context, ref),
+          trailing: widget.trailing ??
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.showDownloadIndicator) _buildDownloadIndicator(context, ref),
+                  if (widget.showFavoriteButton)
+                    FavoriteButton(
+                      isFavorite: isFav,
+                      size: 20,
+                      onTap: () => libraryNotifier.toggleFavorite(widget.track),
+                    ),
+                  if (isMobile)
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim, size: 20),
+                      onPressed: () => _showMobileActionsBottomSheet(context, ref),
+                    )
+                  else
+                    PopupMenuButton<String>(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      icon: const Icon(Icons.more_vert, color: ZephyrColors.textDim, size: 20),
+                      color: ZephyrColors.bgCard,
+                      onSelected: (value) => _handleMenuSelection(context, ref, value),
+                      itemBuilder: (context) => _buildTrackMenuItems(context, ref),
+                    ),
+                ],
               ),
-            ],
-          ),
           onTap: () {
             if (isCurrent) {
               playerNotifier.togglePlayPause();
@@ -141,11 +155,11 @@ class _TrackTileState extends ConsumerState<TrackTile> {
               _playTrackWithResolution(context, ref);
             }
           },
+          onLongPress: () => _showMobileActionsBottomSheet(context, ref),
         ),
       ),
     );
 
-    final isMobile = MediaQuery.of(context).size.width < 700;
     if (!isMobile) {
       return tile;
     }
@@ -555,6 +569,231 @@ class _TrackTileState extends ConsumerState<TrackTile> {
         ZephyrToast.show(context, 'Reopen failed: $e', isError: true);
       }
     }
+  }
+
+  void _showMobileActionsBottomSheet(BuildContext context, WidgetRef ref) {
+    final authState = ref.read(authProvider);
+    final libraryNotifier = ref.read(libraryProvider.notifier);
+    final offlineState = ref.read(offlineDownloadsProvider);
+    final isDownloaded = offlineState.isDownloaded(widget.track.videoId);
+    final isFav = libraryNotifier.isFavorite(
+      widget.track.videoId,
+      title: widget.track.title,
+      artists: widget.track.artists,
+    );
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ZephyrColors.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (modalContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Drag handle
+                  const SizedBox(height: 12),
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Header with Album Cover, Title, Artist
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: [
+                        CoverImage(
+                          videoId: widget.track.videoId,
+                          coverUrl: widget.track.coverUrl,
+                          size: 52,
+                          borderRadius: 8,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.track.title,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                widget.track.artists.isNotEmpty
+                                    ? widget.track.artists.join(', ')
+                                    : 'Unknown Artist',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: ZephyrColors.textDim,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(color: ZephyrColors.bgLight, height: 1, thickness: 0.5),
+                  const SizedBox(height: 8),
+
+                  // Action Items (matching Spotify reference)
+                  // 1. Share
+                  ListTile(
+                    leading: const Icon(Icons.share_outlined, color: ZephyrColors.text),
+                    title: const Text('Share song', style: TextStyle(color: ZephyrColors.text, fontSize: 15)),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      _handleMenuSelection(context, ref, 'share_song');
+                    },
+                  ),
+
+                  // 2. Favorite / Liked
+                  ListTile(
+                    leading: Icon(
+                      isFav ? Icons.favorite : Icons.favorite_border,
+                      color: isFav ? ZephyrColors.primary : ZephyrColors.text,
+                    ),
+                    title: Text(
+                      isFav ? 'Remove from Liked Songs' : 'Add to Liked Songs',
+                      style: const TextStyle(color: ZephyrColors.text, fontSize: 15),
+                    ),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      _handleMenuSelection(context, ref, 'toggle_favorite');
+                    },
+                  ),
+
+                  // 3. Add to Playlist
+                  ListTile(
+                    leading: const Icon(Icons.add_circle_outline, color: ZephyrColors.text),
+                    title: const Text('Add to playlist', style: TextStyle(color: ZephyrColors.text, fontSize: 15)),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      _handleMenuSelection(context, ref, 'add_to_playlist');
+                    },
+                  ),
+
+                  // 4. Remove from this Playlist (if applicable)
+                  if (widget.onRemoveFromPlaylist != null)
+                    ListTile(
+                      leading: const Icon(Icons.remove_circle_outline, color: ZephyrColors.error),
+                      title: const Text(
+                        'Remove from this playlist',
+                        style: TextStyle(color: ZephyrColors.error, fontSize: 15),
+                      ),
+                      onTap: () {
+                        Navigator.pop(modalContext);
+                        _handleMenuSelection(context, ref, 'remove_from_playlist');
+                      },
+                    ),
+
+                  // 5. Add to Queue
+                  ListTile(
+                    leading: const Icon(Icons.queue_music_rounded, color: ZephyrColors.text),
+                    title: const Text('Add to queue', style: TextStyle(color: ZephyrColors.text, fontSize: 15)),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      _handleMenuSelection(context, ref, 'add_to_queue');
+                    },
+                  ),
+
+                  // 6. Go to Album
+                  ListTile(
+                    leading: const Icon(Icons.album_outlined, color: ZephyrColors.text),
+                    title: const Text('Go to album', style: TextStyle(color: ZephyrColors.text, fontSize: 15)),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      _handleMenuSelection(context, ref, 'go_to_album');
+                    },
+                  ),
+
+                  // 7. Go to Artist(s)
+                  for (int i = 0; i < widget.track.artists.length; i++)
+                    ListTile(
+                      leading: const Icon(Icons.person_outline, color: ZephyrColors.text),
+                      title: Text(
+                        widget.track.artists.length == 1
+                            ? 'Go to artist'
+                            : 'Go to ${widget.track.artists[i]}',
+                        style: const TextStyle(color: ZephyrColors.text, fontSize: 15),
+                      ),
+                      onTap: () {
+                        Navigator.pop(modalContext);
+                        final artistId = i < widget.track.artistsIds.length ? widget.track.artistsIds[i] : widget.track.artists[i];
+                        _handleMenuSelection(context, ref, 'go_to_artist_$artistId');
+                      },
+                    ),
+
+                  // 8. Download / Offline
+                  ListTile(
+                    leading: Icon(
+                      isDownloaded ? Icons.delete_outline : Icons.download_for_offline_outlined,
+                      color: isDownloaded ? ZephyrColors.error : ZephyrColors.text,
+                    ),
+                    title: Text(
+                      isDownloaded ? 'Remove download' : 'Download track',
+                      style: TextStyle(
+                        color: isDownloaded ? ZephyrColors.error : ZephyrColors.text,
+                        fontSize: 15,
+                      ),
+                    ),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      _handleMenuSelection(context, ref, 'force_download');
+                    },
+                  ),
+
+                  // 9. Match / Reopen Resolution (if needed)
+                  if (widget.track.needsResolution)
+                    ListTile(
+                      leading: const Icon(Icons.find_in_page_outlined, color: Colors.amberAccent),
+                      title: const Text('Select match', style: TextStyle(color: Colors.amberAccent, fontSize: 15)),
+                      onTap: () {
+                        Navigator.pop(modalContext);
+                        _handleMenuSelection(context, ref, 'resolve_track');
+                      },
+                    ),
+
+                  // 10. Edit Metadata (Curator/Admin)
+                  if (authState.isCurator)
+                    ListTile(
+                      leading: const Icon(Icons.edit_outlined, color: ZephyrColors.textDim),
+                      title: const Text('Edit metadata', style: TextStyle(color: ZephyrColors.textDim, fontSize: 15)),
+                      onTap: () {
+                        Navigator.pop(modalContext);
+                        _handleMenuSelection(context, ref, 'edit_metadata');
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _showAddToPlaylistDialog(BuildContext context, WidgetRef ref) {

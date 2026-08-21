@@ -1,11 +1,15 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
 import '../providers/auth_provider.dart';
 import '../providers/library_provider.dart';
 import '../theme/colors.dart';
 import '../theme/zephyr_theme.dart';
+import '../utils/app_logger.dart';
 import '../widgets/toast.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -426,6 +430,82 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 24),
 
+            // Diagnostics & Debug Logs section
+            _buildSection(
+              title: 'Diagnostics & Debug Logs',
+              isMobile: isMobile,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Client runtime logs track playback, queue transitions, auth token refreshes, and app lifecycle events with timestamps.',
+                    style: TextStyle(color: ZephyrColors.textDim, fontSize: 13, height: 1.4),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 10,
+                    children: [
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.visibility_outlined, size: 16),
+                        label: const Text('View Logs'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: ZephyrColors.bgLight,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: () => _showLogsDialog(context),
+                      ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        label: const Text('Copy to Clipboard'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: ZephyrColors.primary.withValues(alpha: 0.2),
+                          foregroundColor: ZephyrColors.primary,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: () {
+                          final logsText = AppLogger.instance.getLogsAsString();
+                          Clipboard.setData(ClipboardData(text: logsText));
+                          ZephyrToast.show(context, 'Copied ${AppLogger.instance.getLogs().length} log entries');
+                        },
+                      ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.download_rounded, size: 16),
+                        label: const Text('Export log.txt'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: ZephyrColors.primary,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: () => _exportLogFile(context),
+                      ),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        label: const Text('Clear Logs'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: ZephyrColors.error,
+                          side: const BorderSide(color: ZephyrColors.error),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: () async {
+                          await AppLogger.instance.clearLogs();
+                          if (context.mounted) {
+                            ZephyrToast.show(context, 'Debug logs cleared');
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
             // About section
             _buildSection(
               title: 'About Zephyr',
@@ -434,7 +514,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Zephyr Music Client v1.0.8 Nightly',
+                    'Zephyr Music Client v1.0.9 Nightly',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
                   ),
                   SizedBox(height: 8),
@@ -449,6 +529,113 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  void _showLogsDialog(BuildContext context) {
+    final logs = AppLogger.instance.getLogs();
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            backgroundColor: ZephyrColors.bgDark,
+            title: Row(
+              children: [
+                const Icon(Icons.receipt_long_rounded, color: ZephyrColors.primary, size: 20),
+                const SizedBox(width: 8),
+                const Text('Runtime Logs', style: TextStyle(color: Colors.white, fontSize: 16)),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.copy_rounded, size: 18, color: ZephyrColors.textDim),
+                  tooltip: 'Copy all to clipboard',
+                  onPressed: () {
+                    final text = AppLogger.instance.getLogsAsString();
+                    Clipboard.setData(ClipboardData(text: text));
+                    ZephyrToast.show(context, 'Copied ${logs.length} log lines to clipboard');
+                  },
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 600,
+              height: 400,
+              child: logs.isEmpty
+                  ? const Center(child: Text('No logs recorded yet.', style: TextStyle(color: ZephyrColors.textDim)))
+                  : Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: ZephyrColors.bgCard,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: ListView.builder(
+                        itemCount: logs.length,
+                        reverse: true,
+                        itemBuilder: (context, index) {
+                          final log = logs[logs.length - 1 - index];
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2.0),
+                            child: Text(
+                              log,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Close', style: TextStyle(color: ZephyrColors.primary)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _exportLogFile(BuildContext context) async {
+    try {
+      final text = AppLogger.instance.getLogsAsString();
+      if (text.isEmpty) {
+        if (context.mounted) ZephyrToast.show(context, 'No logs to export');
+        return;
+      }
+
+      Directory? exportDir;
+      if (Platform.isAndroid) {
+        exportDir = Directory('/storage/emulated/0/Download');
+        if (!exportDir.existsSync()) {
+          exportDir = await getExternalStorageDirectory();
+        }
+      } else if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+        exportDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+      } else {
+        exportDir = await getApplicationDocumentsDirectory();
+      }
+
+      if (exportDir != null) {
+        final targetFile = File('${exportDir.path}/zephyr_log_${DateTime.now().millisecondsSinceEpoch}.txt');
+        await targetFile.writeAsString(text);
+        if (context.mounted) {
+          ZephyrToast.show(context, 'Exported logs to ${targetFile.path}');
+        }
+      } else {
+        final file = await AppLogger.instance.getLogFile();
+        if (file != null && context.mounted) {
+          ZephyrToast.show(context, 'Log file saved at: ${file.path}');
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ZephyrToast.show(context, 'Export failed: $e', isError: true);
+      }
+    }
   }
 
   Widget _buildQualityPill(String label, {required bool isActive}) {

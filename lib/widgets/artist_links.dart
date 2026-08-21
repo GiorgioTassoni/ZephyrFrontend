@@ -33,7 +33,10 @@ class ArtistLinks extends ConsumerWidget {
 
     // 1. Direct channelId
     if (channelId != null && channelId.isNotEmpty) {
-      navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: channelId));
+      final formattedId = channelId.startsWith('dz_')
+          ? channelId
+          : (RegExp(r'^\d+$').hasMatch(channelId) ? 'dz_$channelId' : channelId);
+      navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: formattedId));
       return;
     }
 
@@ -42,12 +45,15 @@ class ArtistLinks extends ConsumerWidget {
       final res = await ZephyrApi().getArtistByName(name);
       final id = (res['id'] ?? res['channel_id'] ?? res['browse_id'] ?? res['channelId'])?.toString();
       if (id != null && id.isNotEmpty) {
-        navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: id));
+        final formattedId = id.startsWith('dz_')
+            ? id
+            : (RegExp(r'^\d+$').hasMatch(id) ? 'dz_$id' : id);
+        navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: formattedId));
         return;
       }
     } catch (_) {}
 
-    // 3. Search YTMusic remotely for artist channel (remote: true)
+    // 3. Search Deezer/YTMusic remotely for artist channel (remote: true)
     try {
       final searchRes = await ZephyrApi().search(name, remote: true);
       final results = searchRes['results'];
@@ -62,7 +68,10 @@ class ArtistLinks extends ConsumerWidget {
         final firstArtist = artists.first;
         final id = (firstArtist['id'] ?? firstArtist['channel_id'] ?? firstArtist['browse_id'] ?? firstArtist['channelId'])?.toString();
         if (id != null && id.isNotEmpty) {
-          navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: id));
+          final formattedId = id.startsWith('dz_')
+              ? id
+              : (RegExp(r'^\d+$').hasMatch(id) ? 'dz_$id' : id);
+          navNotifier.navigateTo(ScreenState(type: ScreenType.artist, id: formattedId));
           return;
         }
       }
@@ -75,8 +84,7 @@ class ArtistLinks extends ConsumerWidget {
     final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
     final artistDisplayString = validArtists.isNotEmpty ? validArtists.join(', ') : 'Unknown Artist';
 
-    final isMobile = MediaQuery.of(context).size.width < 700;
-    if (isMobile || validArtists.isEmpty) {
+    if (validArtists.isEmpty) {
       return Text(
         artistDisplayString,
         style: baseStyle,

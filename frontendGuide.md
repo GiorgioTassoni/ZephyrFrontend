@@ -238,3 +238,20 @@ The `ZephyrApi` class is a singleton that wraps all REST endpoints and SSE strea
 4. **Never run git commands**: Do not commit or push unless explicitly instructed by the user.
 5. **Keep English Copy**: All user-facing strings, logs, and labels must remain in English.
 6. **Always run `flutter analyze`**: After completing modifications, run `flutter analyze` to verify that no compiler errors or broken types were introduced.
+
+### 8.1. Versioning & Release Channels
+
+The numeric application version is defined once in `pubspec.yaml` using Flutter's standard format:
+
+```yaml
+version: 1.1.0+10
+```
+
+The Settings screen reads the installed version through `package_info_plus`, so it must not hardcode a version number. The release channel is supplied at build time through the `RELEASE_CHANNEL` Dart define:
+
+```bash
+flutter build apk --release --dart-define=RELEASE_CHANNEL=Preview
+flutter build windows --release --dart-define=RELEASE_CHANNEL=Stable
+```
+
+If `RELEASE_CHANNEL` is omitted, the app defaults to `Preview`. Supported channel names are not restricted by the client, so CI can use values such as `Preview`, `Beta`, or `Stable`.

@@ -589,7 +589,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     final isPlaying = ref.watch(playerProvider.select((s) => s.isPlaying));
     final isLoading = ref.watch(playerProvider.select((s) => s.isLoading));
     final isShuffled = ref.watch(playerProvider.select((s) => s.isShuffled));
-    final queueMode = ref.watch(playerProvider.select((s) => s.queueMode));
+    final repeatMode = ref.watch(playerProvider.select((s) => s.repeatMode));
     final isPlayerDevice = ref.watch(playerProvider.select((s) => s.isPlayerDevice));
     final activeDeviceName = ref.watch(playerProvider.select((s) => s.activeDeviceName));
     final volume = ref.watch(playerProvider.select((s) => s.volume));
@@ -969,10 +969,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                         ),
                         IconButton(
                           icon: Icon(
-                            queueMode == 'repeat_one'
+                            repeatMode == 'one'
                                 ? Icons.repeat_one_rounded
                                 : Icons.repeat_rounded,
-                            color: queueMode != 'normal' ? ZephyrColors.primary : ZephyrColors.textDim,
+                            color: repeatMode != 'off' ? ZephyrColors.primary : ZephyrColors.textDim,
                             size: 26,
                           ),
                           onPressed: () => playerNotifier.toggleQueueMode(),
@@ -1504,10 +1504,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                       const SizedBox(width: 12),
                       IconButton(
                         icon: Icon(
-                          queueMode == 'repeat_one'
+                          repeatMode == 'one'
                               ? Icons.repeat_one
                               : Icons.repeat,
-                          color: queueMode != 'normal' ? ZephyrColors.primary : ZephyrColors.textDim,
+                          color: repeatMode != 'off' ? ZephyrColors.primary : ZephyrColors.textDim,
                           size: 22,
                         ),
                         onPressed: () => playerNotifier.toggleQueueMode(),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
 import '../providers/auth_provider.dart';
@@ -20,20 +21,53 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  static const _releaseChannel = String.fromEnvironment(
+    'RELEASE_CHANNEL',
+    defaultValue: 'Preview',
+  );
+
   final _serverController = TextEditingController();
   bool _autoSelectHighConfidence = true;
+  String _appVersion = 'Unknown';
+
+  String get _displayVersion {
+    // Keep the friendly label as 1.1 while preserving patch versions such as
+    // 1.1.1 when they are introduced in pubspec.yaml.
+    final match = RegExp(r'^(\d+\.\d+)(\.0)?$').firstMatch(_appVersion);
+    return match?.group(1) ?? _appVersion;
+  }
+
+  String get _versionLabel {
+    final channel = _releaseChannel.trim();
+    return 'Zephyr Music Client v$_displayVersion'
+        '${channel.isEmpty ? '' : ' $channel'}';
+  }
 
   @override
   void initState() {
     super.initState();
     _serverController.text = ZephyrApi().baseUrl;
+    _loadAppInfo();
     _loadSettings();
+  }
+
+  Future<void> _loadAppInfo() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() {
+        _appVersion = packageInfo.version;
+      });
+    } catch (_) {
+      // Keep the pubspec version fallback if platform metadata is unavailable.
+    }
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _autoSelectHighConfidence = prefs.getBool('auto_select_high_confidence') ?? true;
+      _autoSelectHighConfidence =
+          prefs.getBool('auto_select_high_confidence') ?? true;
     });
   }
 
@@ -63,7 +97,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           children: [
             Text(
               'Settings',
-              style: TextStyle(fontSize: isMobile ? 26 : 32, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: isMobile ? 26 : 32,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             SizedBox(height: isMobile ? 20 : 32),
 
@@ -84,21 +121,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       Expanded(
                         child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
-                            backgroundColor: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                            backgroundColor:
+                                _serverController.text.trim() ==
+                                    'https://zephyrmusic.duckdns.org'
                                 ? ZephyrColors.primary.withValues(alpha: 0.15)
                                 : Colors.transparent,
                             side: BorderSide(
-                              color: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                              color:
+                                  _serverController.text.trim() ==
+                                      'https://zephyrmusic.duckdns.org'
                                   ? ZephyrColors.primary
                                   : ZephyrColors.bgLight,
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
                           icon: Icon(
                             Icons.cloud_rounded,
                             size: 16,
-                            color: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                            color:
+                                _serverController.text.trim() ==
+                                    'https://zephyrmusic.duckdns.org'
                                 ? ZephyrColors.primary
                                 : ZephyrColors.textDim,
                           ),
@@ -107,14 +152,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: _serverController.text.trim() == 'https://zephyrmusic.duckdns.org'
+                              color:
+                                  _serverController.text.trim() ==
+                                      'https://zephyrmusic.duckdns.org'
                                   ? ZephyrColors.primary
                                   : ZephyrColors.text,
                             ),
                           ),
                           onPressed: () {
                             setState(() {
-                              _serverController.text = 'https://zephyrmusic.duckdns.org';
+                              _serverController.text =
+                                  'https://zephyrmusic.duckdns.org';
                             });
                           },
                         ),
@@ -123,21 +171,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       Expanded(
                         child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
-                            backgroundColor: _serverController.text.trim() == 'http://localhost:8000'
+                            backgroundColor:
+                                _serverController.text.trim() ==
+                                    'http://localhost:8000'
                                 ? ZephyrColors.primary.withValues(alpha: 0.15)
                                 : Colors.transparent,
                             side: BorderSide(
-                              color: _serverController.text.trim() == 'http://localhost:8000'
+                              color:
+                                  _serverController.text.trim() ==
+                                      'http://localhost:8000'
                                   ? ZephyrColors.primary
                                   : ZephyrColors.bgLight,
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
                           icon: Icon(
                             Icons.computer_rounded,
                             size: 16,
-                            color: _serverController.text.trim() == 'http://localhost:8000'
+                            color:
+                                _serverController.text.trim() ==
+                                    'http://localhost:8000'
                                 ? ZephyrColors.primary
                                 : ZephyrColors.textDim,
                           ),
@@ -146,7 +202,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: _serverController.text.trim() == 'http://localhost:8000'
+                              color:
+                                  _serverController.text.trim() ==
+                                      'http://localhost:8000'
                                   ? ZephyrColors.primary
                                   : ZephyrColors.text,
                             ),
@@ -168,16 +226,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       decoration: InputDecoration(
                         fillColor: ZephyrColors.bgDark,
                         filled: true,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(color: ZephyrColors.bgLight.withValues(alpha: 0.4)),
+                          borderSide: BorderSide(
+                            color: ZephyrColors.bgLight.withValues(alpha: 0.4),
+                          ),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: ZephyrColors.primary),
+                          borderSide: const BorderSide(
+                            color: ZephyrColors.primary,
+                          ),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -201,20 +268,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         Expanded(
                           child: TextField(
                             controller: _serverController,
-                            style: const TextStyle(color: Colors.white, fontSize: 14),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                            ),
                             decoration: InputDecoration(
                               fillColor: ZephyrColors.bgDark,
                               filled: true,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: ZephyrColors.bgLight.withValues(alpha: 0.4)),
+                                borderSide: BorderSide(
+                                  color: ZephyrColors.bgLight.withValues(
+                                    alpha: 0.4,
+                                  ),
+                                ),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: const BorderSide(color: ZephyrColors.primary),
+                                borderSide: const BorderSide(
+                                  color: ZephyrColors.primary,
+                                ),
                               ),
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
+                              ),
                             ),
                           ),
                         ),
@@ -228,7 +309,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             if (newUrl.isNotEmpty) {
                               await authNotifier.updateServerUrl(newUrl);
                               if (context.mounted) {
-                                ZephyrToast.show(context, 'Server URL updated!');
+                                ZephyrToast.show(
+                                  context,
+                                  'Server URL updated!',
+                                );
                               }
                             }
                           },
@@ -254,25 +338,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       children: [
                         const Text(
                           'Downloaded Tracks',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: Colors.white,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           '$downloadedCount tracks saved for offline listening',
-                          style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                          style: const TextStyle(
+                            color: ZephyrColors.textDim,
+                            fontSize: 13,
+                          ),
                         ),
                         const SizedBox(height: 12),
                         OutlinedButton.icon(
-                          icon: const Icon(Icons.sync_rounded, size: 16, color: ZephyrColors.primary),
-                          label: const Text('Resync Library', style: TextStyle(color: ZephyrColors.primary, fontSize: 13)),
+                          icon: const Icon(
+                            Icons.sync_rounded,
+                            size: 16,
+                            color: ZephyrColors.primary,
+                          ),
+                          label: const Text(
+                            'Resync Library',
+                            style: TextStyle(
+                              color: ZephyrColors.primary,
+                              fontSize: 13,
+                            ),
+                          ),
                           style: OutlinedButton.styleFrom(
-                            side: BorderSide(color: ZephyrColors.primary.withValues(alpha: 0.5)),
+                            side: BorderSide(
+                              color: ZephyrColors.primary.withValues(
+                                alpha: 0.5,
+                              ),
+                            ),
                             shape: const StadiumBorder(),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
                           ),
                           onPressed: () {
                             ref.read(libraryProvider.notifier).loadLibrary();
-                            ZephyrToast.show(context, 'Library resynchronized!');
+                            ZephyrToast.show(
+                              context,
+                              'Library resynchronized!',
+                            );
                           },
                         ),
                       ],
@@ -287,28 +398,55 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             children: [
                               const Text(
                                 'Downloaded Tracks',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                  color: Colors.white,
+                                ),
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 '$downloadedCount tracks saved for offline listening',
-                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 13),
+                                style: const TextStyle(
+                                  color: ZephyrColors.textDim,
+                                  fontSize: 13,
+                                ),
                               ),
                             ],
                           ),
                         ),
                         const SizedBox(width: 16),
                         OutlinedButton.icon(
-                          icon: const Icon(Icons.sync_rounded, size: 16, color: ZephyrColors.primary),
-                          label: const Text('Resync Library', style: TextStyle(color: ZephyrColors.primary, fontSize: 13)),
+                          icon: const Icon(
+                            Icons.sync_rounded,
+                            size: 16,
+                            color: ZephyrColors.primary,
+                          ),
+                          label: const Text(
+                            'Resync Library',
+                            style: TextStyle(
+                              color: ZephyrColors.primary,
+                              fontSize: 13,
+                            ),
+                          ),
                           style: OutlinedButton.styleFrom(
-                            side: BorderSide(color: ZephyrColors.primary.withValues(alpha: 0.5)),
+                            side: BorderSide(
+                              color: ZephyrColors.primary.withValues(
+                                alpha: 0.5,
+                              ),
+                            ),
                             shape: const StadiumBorder(),
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
                           ),
                           onPressed: () {
                             ref.read(libraryProvider.notifier).loadLibrary();
-                            ZephyrToast.show(context, 'Library resynchronized!');
+                            ZephyrToast.show(
+                              context,
+                              'Library resynchronized!',
+                            );
                           },
                         ),
                       ],
@@ -317,10 +455,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const SizedBox(height: 16),
                   const Text(
                     'Audio Quality',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: ZephyrColors.textDim),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: ZephyrColors.textDim,
+                    ),
                   ),
                   const SizedBox(height: 8),
-                  _buildQualityPill('High Quality 320 kbps MP3', isActive: true),
+                  _buildQualityPill(
+                    'High Quality 320 kbps MP3',
+                    isActive: true,
+                  ),
                 ],
               ),
             ),
@@ -334,7 +479,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 color: Colors.transparent,
                 child: SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Auto-Select High Confidence Matches', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
+                  title: const Text(
+                    'Auto-Select High Confidence Matches',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
                   subtitle: const Text(
                     'Automatically confirm candidate matches with ≥ 85% match score without opening the candidate selection modal (Audio tracks only).',
                     style: TextStyle(color: ZephyrColors.textDim, fontSize: 13),
@@ -348,7 +499,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     if (context.mounted) {
                       ZephyrToast.show(
                         context,
-                        val ? 'Auto-select high confidence matches enabled' : 'Auto-select disabled (all matches require manual selection)',
+                        val
+                            ? 'Auto-select high confidence matches enabled'
+                            : 'Auto-select disabled (all matches require manual selection)',
                       );
                     }
                   },
@@ -367,12 +520,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       children: [
                         Text(
                           'Logged in as ${authState.username ?? 'Unknown'}',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: Colors.white,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          authState.isAdmin ? 'Role: Administrator' : 'Role: Standard User',
-                          style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+                          authState.isAdmin
+                              ? 'Role: Administrator'
+                              : 'Role: Standard User',
+                          style: const TextStyle(
+                            color: ZephyrColors.textDim,
+                            fontSize: 14,
+                          ),
                         ),
                         const SizedBox(height: 16),
                         ElevatedButton.icon(
@@ -381,7 +543,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: ZephyrColors.error,
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
                             shape: const StadiumBorder(),
                             elevation: 0,
                           ),
@@ -400,12 +565,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             children: [
                               Text(
                                 'Logged in as ${authState.username ?? 'Unknown'}',
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Colors.white,
+                                ),
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                authState.isAdmin ? 'Role: Administrator' : 'Role: Standard User',
-                                style: const TextStyle(color: ZephyrColors.textDim, fontSize: 14),
+                                authState.isAdmin
+                                    ? 'Role: Administrator'
+                                    : 'Role: Standard User',
+                                style: const TextStyle(
+                                  color: ZephyrColors.textDim,
+                                  fontSize: 14,
+                                ),
                               ),
                             ],
                           ),
@@ -417,7 +591,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: ZephyrColors.error,
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
                             shape: const StadiumBorder(),
                             elevation: 0,
                           ),
@@ -439,7 +616,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 children: [
                   const Text(
                     'Client runtime logs track playback, queue transitions, auth token refreshes, and app lifecycle events with timestamps.',
-                    style: TextStyle(color: ZephyrColors.textDim, fontSize: 13, height: 1.4),
+                    style: TextStyle(
+                      color: ZephyrColors.textDim,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Wrap(
@@ -452,8 +633,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: ZephyrColors.bgLight,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                         onPressed: () => _showLogsDialog(context),
                       ),
@@ -461,15 +647,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         icon: const Icon(Icons.copy_rounded, size: 16),
                         label: const Text('Copy to Clipboard'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: ZephyrColors.primary.withValues(alpha: 0.2),
+                          backgroundColor: ZephyrColors.primary.withValues(
+                            alpha: 0.2,
+                          ),
                           foregroundColor: ZephyrColors.primary,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                         onPressed: () {
                           final logsText = AppLogger.instance.getLogsAsString();
                           Clipboard.setData(ClipboardData(text: logsText));
-                          ZephyrToast.show(context, 'Copied ${AppLogger.instance.getLogs().length} log entries');
+                          ZephyrToast.show(
+                            context,
+                            'Copied ${AppLogger.instance.getLogs().length} log entries',
+                          );
                         },
                       ),
                       ElevatedButton.icon(
@@ -478,19 +674,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: ZephyrColors.primary,
                           foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                         onPressed: () => _exportLogFile(context),
                       ),
                       OutlinedButton.icon(
-                        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 16,
+                        ),
                         label: const Text('Clear Logs'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: ZephyrColors.error,
                           side: const BorderSide(color: ZephyrColors.error),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                         onPressed: () async {
                           await AppLogger.instance.clearLogs();
@@ -510,17 +719,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _buildSection(
               title: 'About Zephyr',
               isMobile: isMobile,
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Zephyr Music Client v1.0.9 Nightly',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                    _versionLabel,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: Colors.white,
+                    ),
                   ),
                   SizedBox(height: 8),
                   Text(
                     'Zephyr is a self-hosted audio streaming application that acts as a client for custom Spotify replacement backends. It integrates YouTube Music matching, synced lyrics (.lrc parser), playlist management, and listening history databases.',
-                    style: TextStyle(color: ZephyrColors.textDim, fontSize: 13, height: 1.5),
+                    style: TextStyle(
+                      color: ZephyrColors.textDim,
+                      fontSize: 13,
+                      height: 1.5,
+                    ),
                   ),
                 ],
               ),
@@ -541,17 +758,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             backgroundColor: ZephyrColors.bgDark,
             title: Row(
               children: [
-                const Icon(Icons.receipt_long_rounded, color: ZephyrColors.primary, size: 20),
+                const Icon(
+                  Icons.receipt_long_rounded,
+                  color: ZephyrColors.primary,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
-                const Text('Runtime Logs', style: TextStyle(color: Colors.white, fontSize: 16)),
+                const Text(
+                  'Runtime Logs',
+                  style: TextStyle(color: Colors.white, fontSize: 16),
+                ),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.copy_rounded, size: 18, color: ZephyrColors.textDim),
+                  icon: const Icon(
+                    Icons.copy_rounded,
+                    size: 18,
+                    color: ZephyrColors.textDim,
+                  ),
                   tooltip: 'Copy all to clipboard',
                   onPressed: () {
                     final text = AppLogger.instance.getLogsAsString();
                     Clipboard.setData(ClipboardData(text: text));
-                    ZephyrToast.show(context, 'Copied ${logs.length} log lines to clipboard');
+                    ZephyrToast.show(
+                      context,
+                      'Copied ${logs.length} log lines to clipboard',
+                    );
                   },
                 ),
               ],
@@ -560,7 +791,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               width: 600,
               height: 400,
               child: logs.isEmpty
-                  ? const Center(child: Text('No logs recorded yet.', style: TextStyle(color: ZephyrColors.textDim)))
+                  ? const Center(
+                      child: Text(
+                        'No logs recorded yet.',
+                        style: TextStyle(color: ZephyrColors.textDim),
+                      ),
+                    )
                   : Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
@@ -590,7 +826,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Close', style: TextStyle(color: ZephyrColors.primary)),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(color: ZephyrColors.primary),
+                ),
               ),
             ],
           );
@@ -614,13 +853,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           exportDir = await getExternalStorageDirectory();
         }
       } else if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-        exportDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+        exportDir =
+            await getDownloadsDirectory() ??
+            await getApplicationDocumentsDirectory();
       } else {
         exportDir = await getApplicationDocumentsDirectory();
       }
 
       if (exportDir != null) {
-        final targetFile = File('${exportDir.path}/zephyr_log_${DateTime.now().millisecondsSinceEpoch}.txt');
+        final targetFile = File(
+          '${exportDir.path}/zephyr_log_${DateTime.now().millisecondsSinceEpoch}.txt',
+        );
         await targetFile.writeAsString(text);
         if (context.mounted) {
           ZephyrToast.show(context, 'Exported logs to ${targetFile.path}');
@@ -642,10 +885,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: isActive ? ZephyrColors.primary.withValues(alpha: 0.15) : ZephyrColors.bgDark,
+        color: isActive
+            ? ZephyrColors.primary.withValues(alpha: 0.15)
+            : ZephyrColors.bgDark,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: isActive ? ZephyrColors.primary : ZephyrColors.bgLight.withValues(alpha: 0.4),
+          color: isActive
+              ? ZephyrColors.primary
+              : ZephyrColors.bgLight.withValues(alpha: 0.4),
         ),
       ),
       child: Text(
@@ -659,7 +906,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildSection({required String title, required Widget child, required bool isMobile}) {
+  Widget _buildSection({
+    required String title,
+    required Widget child,
+    required bool isMobile,
+  }) {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 16 : 24),

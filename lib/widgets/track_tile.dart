@@ -114,6 +114,7 @@ class _TrackTileState extends ConsumerState<TrackTile> {
           ),
           subtitle: ArtistLinks(
             track: widget.track,
+            linkable: false,
             style: const TextStyle(
               color: ZephyrColors.textDim,
               fontSize: 12,
@@ -459,6 +460,9 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     } else if (value == 'add_to_queue') {
       ref.read(playerProvider.notifier).addToQueue(widget.track);
       ZephyrToast.show(context, 'Added "${widget.track.title}" to queue');
+    } else if (value == 'start_radio') {
+      ref.read(playerProvider.notifier).startRadio(widget.track);
+      ZephyrToast.show(context, 'Starting radio for "${widget.track.title}"');
     } else if (value == 'add_to_playlist') {
       _showAddToPlaylistDialog(context, ref);
     } else if (value == 'remove_from_playlist') {
@@ -720,6 +724,16 @@ class _TrackTileState extends ConsumerState<TrackTile> {
                     },
                   ),
 
+                  // 5b. Start Radio
+                  ListTile(
+                    leading: const Icon(Icons.radio_rounded, color: ZephyrColors.text),
+                    title: const Text('Start radio', style: TextStyle(color: ZephyrColors.text, fontSize: 15)),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      _handleMenuSelection(context, ref, 'start_radio');
+                    },
+                  ),
+
                   // 6. Go to Album
                   ListTile(
                     leading: const Icon(Icons.album_outlined, color: ZephyrColors.text),
@@ -887,6 +901,19 @@ class _TrackTileState extends ConsumerState<TrackTile> {
             Icon(Icons.queue_music_rounded, size: 20, color: ZephyrColors.textDim),
             SizedBox(width: 8),
             Text('Add to Queue'),
+          ],
+        ),
+      ),
+    );
+
+    items.add(
+      const PopupMenuItem(
+        value: 'start_radio',
+        child: Row(
+          children: [
+            Icon(Icons.radio_rounded, size: 20, color: ZephyrColors.textDim),
+            SizedBox(width: 8),
+            Text('Start Radio'),
           ],
         ),
       ),

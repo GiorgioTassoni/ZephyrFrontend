@@ -45,8 +45,10 @@ class ZephyrApi {
     }
   }
 
-  final _importProgressController = StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get onImportProgress => _importProgressController.stream;
+  final _importProgressController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onImportProgress =>
+      _importProgressController.stream;
 
   void notifyImportProgress(Map<String, dynamic> data) {
     if (!_importProgressController.isClosed) {
@@ -55,6 +57,55 @@ class ZephyrApi {
   }
 
   static final ZephyrApi _instance = ZephyrApi._internal();
+
+  String _requestPath(RequestOptions options) {
+    final uri = options.uri;
+    final query = uri.query.isEmpty ? '' : '?${uri.query}';
+    return '${uri.path}$query';
+  }
+
+  dynamic _summarizePayload(dynamic payload) {
+    if (payload == null) return null;
+    if (payload is FormData) return {'type': 'multipart'};
+    if (payload is List) return {'type': 'list', 'length': payload.length};
+    if (payload is Map) {
+      final summary = <String, dynamic>{};
+      const fields = [
+        'action',
+        'current_track_id',
+        'device_id',
+        'queue_mode',
+        'seed_radio',
+        'is_playing',
+        'position_ms',
+        'origin',
+        'updated_at',
+        'position_updated_at',
+        'history_count',
+        'queue_count',
+        'user_queue_count',
+        'radio_status',
+        'radio_request_id',
+        'radio_generation',
+      ];
+      for (final field in fields) {
+        if (payload.containsKey(field)) summary[field] = payload[field];
+      }
+      for (final field in ['queue', 'user_queue']) {
+        final value = payload[field];
+        if (value is List) summary['${field}_length'] = value.length;
+      }
+      if (summary.isEmpty) {
+        summary['keys'] = payload.keys
+            .map((key) => key.toString())
+            .take(30)
+            .toList();
+      }
+      return summary;
+    }
+    final text = payload.toString();
+    return text.length > 160 ? '${text.substring(0, 160)}…' : text;
+  }
 
   factory ZephyrApi() {
     return _instance;
@@ -85,9 +136,56 @@ class ZephyrApi {
           if (_token != null && !options.headers.containsKey('Authorization')) {
             options.headers['Authorization'] = 'Bearer $_token';
           }
+          final requestId = 'api-${DateTime.now().microsecondsSinceEpoch}';
+          options.extra['zephyr_request_id'] = requestId;
+          options.extra['zephyr_started_at'] = DateTime.now().toUtc();
+          AppLogger.instance.logApi(
+            'request_started',
+            data: {
+              'requestId': requestId,
+              'method': options.method,
+              'path': _requestPath(options),
+              'body': _summarizePayload(options.data),
+            },
+          );
           return handler.next(options);
         },
+        onResponse: (response, handler) {
+          final startedAt = response.requestOptions.extra['zephyr_started_at'];
+          final durationMs = startedAt is DateTime
+              ? DateTime.now().toUtc().difference(startedAt).inMilliseconds
+              : null;
+          AppLogger.instance.logApi(
+            'request_succeeded',
+            data: {
+              'requestId': response.requestOptions.extra['zephyr_request_id'],
+              'method': response.requestOptions.method,
+              'path': _requestPath(response.requestOptions),
+              'status': response.statusCode,
+              'durationMs': durationMs,
+              'body': _summarizePayload(response.data),
+            },
+          );
+          return handler.next(response);
+        },
         onError: (e, handler) async {
+          final startedAt = e.requestOptions.extra['zephyr_started_at'];
+          final durationMs = startedAt is DateTime
+              ? DateTime.now().toUtc().difference(startedAt).inMilliseconds
+              : null;
+          AppLogger.instance.logApi(
+            'request_failed',
+            data: {
+              'requestId': e.requestOptions.extra['zephyr_request_id'],
+              'method': e.requestOptions.method,
+              'path': _requestPath(e.requestOptions),
+              'status': e.response?.statusCode,
+              'durationMs': durationMs,
+              'type': e.type.name,
+              'error': e.message,
+              'body': _summarizePayload(e.response?.data),
+            },
+          );
           // On 401, attempt a single token refresh then retry.
           // If the refresh itself fails, signal onUnauthorized — no re-login.
           if (e.response?.statusCode == 401 &&
@@ -154,10 +252,16 @@ class ZephyrApi {
         onTokenRefreshed?.call(newAccess);
         return true;
       }
-      AppLogger.instance.logAuth('token_refresh_failed', data: {'reason': 'missing_tokens_in_payload'});
+      AppLogger.instance.logAuth(
+        'token_refresh_failed',
+        data: {'reason': 'missing_tokens_in_payload'},
+      );
       return false;
     } catch (e) {
-      AppLogger.instance.logAuth('token_refresh_failed', data: {'error': e.toString()});
+      AppLogger.instance.logAuth(
+        'token_refresh_failed',
+        data: {'error': e.toString()},
+      );
       return false;
     }
   }
@@ -167,7 +271,9 @@ class ZephyrApi {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString('zephyr_server_url') ?? 'https://zephyrmusic.duckdns.org';
+    _baseUrl =
+        prefs.getString('zephyr_server_url') ??
+        'https://zephyrmusic.duckdns.org';
     _token = prefs.getString('zephyr_auth_token');
     _refreshToken = prefs.getString('zephyr_refresh_token');
     _dio.options.baseUrl = _baseUrl;
@@ -180,7 +286,9 @@ class ZephyrApi {
     }
     final uri = Uri.tryParse(cleanUrl);
     if (uri == null || (!uri.isScheme('http') && !uri.isScheme('https'))) {
-      throw ArgumentError('Invalid server URL. Must begin with http:// or https://');
+      throw ArgumentError(
+        'Invalid server URL. Must begin with http:// or https://',
+      );
     }
     _baseUrl = cleanUrl;
     _dio.options.baseUrl = _baseUrl;
@@ -351,7 +459,8 @@ class ZephyrApi {
     _proxyServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _proxyPort = _proxyServer!.port;
     _proxyServer!.listen((HttpRequest req) async {
-      if (req.uri.pathSegments.length < 2 || req.uri.pathSegments.first != 'stream') {
+      if (req.uri.pathSegments.length < 2 ||
+          req.uri.pathSegments.first != 'stream') {
         req.response.statusCode = HttpStatus.badRequest;
         await req.response.close();
         return;
@@ -504,11 +613,38 @@ class ZephyrApi {
     }
   }
 
+  /// Fetch a radio/discovery queue seeded by [trackId].
+  /// Returns `{ "seed": "...", "queue": [...] }`.
+  Future<Map<String, dynamic>> getDiscoveryQueue(
+    String trackId, {
+    int limit = 15,
+  }) async {
+    try {
+      final response = await _dio.get(
+        '/api/tracks/$trackId/discovery',
+        queryParameters: {'limit': limit},
+      );
+      return response.data;
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
   // --- Player State & Server Queue (Exchange 42 Multi-Device & SSE) ---
 
-  Future<Map<String, dynamic>> getPlayerState() async {
+  Future<Map<String, dynamic>> getPlayerState({
+    String reason = 'unspecified',
+    String? deviceId,
+  }) async {
+    AppLogger.instance.logApi(
+      'player_state_fetch_requested',
+      data: {'reason': reason, 'deviceId': deviceId},
+    );
     try {
-      final response = await _dio.get('/api/player/state');
+      final response = await _dio.get(
+        '/api/player/state',
+        queryParameters: deviceId != null ? {'device_id': deviceId} : null,
+      );
       return response.data;
     } on DioException catch (e) {
       throw _handleDioError(e);
@@ -525,6 +661,7 @@ class ZephyrApi {
     List<Map<String, dynamic>>? queue,
     List<Map<String, dynamic>>? userQueue,
     String? origin,
+    bool? seedRadio,
   }) async {
     try {
       final body = <String, dynamic>{};
@@ -539,6 +676,7 @@ class ZephyrApi {
       if (origin != null && (origin == 'queue' || origin == 'context')) {
         body['origin'] = origin;
       }
+      if (seedRadio != null) body['seed_radio'] = seedRadio;
 
       final response = await _dio.put('/api/player/state', data: body);
       return response.data;
@@ -557,11 +695,12 @@ class ZephyrApi {
     }
   }
 
-  Future<Map<String, dynamic>> sendPlayerCommand({
+  Future<Map<String, dynamic>?> sendPlayerCommand({
     required String action,
     String? currentTrackId,
     int? positionMs,
     String? origin,
+    bool? seedRadio,
   }) async {
     try {
       final body = <String, dynamic>{'action': action};
@@ -570,10 +709,19 @@ class ZephyrApi {
       if (origin != null && (origin == 'queue' || origin == 'context')) {
         body['origin'] = origin;
       }
+      if (seedRadio != null) body['seed_radio'] = seedRadio;
 
       final response = await _dio.post('/api/player/command', data: body);
+      if (response.data is Map) {
+        final data = Map<String, dynamic>.from(response.data as Map);
+        data['_http_status'] = response.statusCode;
+        return data;
+      }
       return response.data;
     } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        return null;
+      }
       throw _handleDioError(e);
     }
   }
@@ -646,6 +794,10 @@ class ZephyrApi {
           request.headers.set('Cache-Control', 'no-cache');
 
           final response = await request.close();
+          AppLogger.instance.logSse(
+            'connection_response',
+            data: {'deviceId': deviceId, 'status': response.statusCode},
+          );
           if (response.statusCode == 401) {
             await response.drain<void>().catchError((_) {});
             wasDisconnected = true;
@@ -670,7 +822,10 @@ class ZephyrApi {
           if (wasDisconnected) {
             wasDisconnected = false;
             try {
-              final s = await getPlayerState();
+              final s = await getPlayerState(
+                reason: 'sse_reconnect',
+                deviceId: deviceId,
+              );
               s['_event_type'] = 'state';
               s['_sse_initial'] = true;
               yield s;
@@ -707,6 +862,21 @@ class ZephyrApi {
                     final parsed = jsonDecode(rawData);
                     if (parsed is Map<String, dynamic>) {
                       parsed['_event_type'] = eventType;
+                      AppLogger.instance.logSse(
+                        'event_received',
+                        data: {
+                          'event': eventType,
+                          'currentTrackId': parsed['current_track_id'],
+                          'isPlaying': parsed['is_playing'],
+                          'updatedAt': parsed['updated_at'],
+                          'queueLength': parsed['queue'] is List
+                              ? (parsed['queue'] as List).length
+                              : null,
+                          'radioStatus': parsed['radio_status'],
+                          'radioRequestId': parsed['radio_request_id'],
+                          'radioGeneration': parsed['radio_generation'],
+                        },
+                      );
                       if (eventType == 'import_progress') {
                         notifyImportProgress(parsed);
                       }
@@ -727,6 +897,14 @@ class ZephyrApi {
             }
           }
         } catch (e) {
+          AppLogger.instance.logSse(
+            'connection_error',
+            data: {
+              'deviceId': deviceId,
+              'error': e.toString(),
+              'failureCount': failureCount + 1,
+            },
+          );
           debugPrint('SSE connection notice: $e');
           wasDisconnected = true;
           failureCount++;
@@ -752,7 +930,29 @@ class ZephyrApi {
   Future<Map<String, dynamic>?> nextPlayerTrack() async {
     try {
       final response = await _dio.post('/api/player/next');
-      return response.data;
+      final data = response.data is Map<String, dynamic>
+          ? Map<String, dynamic>.from(response.data)
+          : Map<String, dynamic>.from(response.data as Map);
+      // Keep the transport status available to the player. In particular,
+      // 202 means radio is still building and is not an end-of-queue signal.
+      data['_http_status'] = response.statusCode;
+      AppLogger.instance.logQueue(
+        'next_api_result',
+        data: {
+          'status': response.statusCode,
+          'currentTrackId': data['current_track_id'],
+          'isPlaying': data['is_playing'],
+          'updatedAt': data['updated_at'],
+          'queueLength': data['queue'] is List
+              ? (data['queue'] as List).length
+              : null,
+          'historyCount': data['history_count'],
+          'radioStatus': data['radio_status'],
+          'radioRequestId': data['radio_request_id'],
+          'radioGeneration': data['radio_generation'],
+        },
+      );
+      return data;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404)
         return null; // Stop signal in context mode
@@ -763,7 +963,27 @@ class ZephyrApi {
   Future<Map<String, dynamic>?> previousPlayerTrack() async {
     try {
       final response = await _dio.post('/api/player/previous');
-      return response.data;
+      final data = response.data is Map<String, dynamic>
+          ? Map<String, dynamic>.from(response.data)
+          : Map<String, dynamic>.from(response.data as Map);
+      data['_http_status'] = response.statusCode;
+      AppLogger.instance.logQueue(
+        'previous_api_result',
+        data: {
+          'status': response.statusCode,
+          'currentTrackId': data['current_track_id'],
+          'isPlaying': data['is_playing'],
+          'updatedAt': data['updated_at'],
+          'queueLength': data['queue'] is List
+              ? (data['queue'] as List).length
+              : null,
+          'historyCount': data['history_count'],
+          'radioStatus': data['radio_status'],
+          'radioRequestId': data['radio_request_id'],
+          'radioGeneration': data['radio_generation'],
+        },
+      );
+      return data;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) return null; // History empty signal
       throw _handleDioError(e);
@@ -967,18 +1187,22 @@ class ZephyrApi {
     }
   }
 
-  Future<Map<String, dynamic>> skipImportResolution(
-    String resolutionId,
-  ) async {
-    debugPrint('🚀 [ZephyrApi.skipImportResolution] POST /api/import/resolution/$resolutionId/skip');
+  Future<Map<String, dynamic>> skipImportResolution(String resolutionId) async {
+    debugPrint(
+      '🚀 [ZephyrApi.skipImportResolution] POST /api/import/resolution/$resolutionId/skip',
+    );
     try {
       final response = await _dio.post(
         '/api/import/resolution/$resolutionId/skip',
       );
-      debugPrint('✅ [ZephyrApi.skipImportResolution] Success: ${response.data}');
+      debugPrint(
+        '✅ [ZephyrApi.skipImportResolution] Success: ${response.data}',
+      );
       return response.data;
     } on DioException catch (e) {
-      debugPrint('❌ [ZephyrApi.skipImportResolution] Error ${e.response?.statusCode}: ${e.response?.data}');
+      debugPrint(
+        '❌ [ZephyrApi.skipImportResolution] Error ${e.response?.statusCode}: ${e.response?.data}',
+      );
       throw _handleDioError(e);
     }
   }
@@ -1234,7 +1458,9 @@ class ZephyrApi {
   }
 
   /// Get playlist download manifest (GET /api/playlists/{id}/download)
-  Future<PlaylistDownloadManifest> getPlaylistDownloadManifest(dynamic playlistId) async {
+  Future<PlaylistDownloadManifest> getPlaylistDownloadManifest(
+    dynamic playlistId,
+  ) async {
     try {
       final response = await _dio.get('/api/playlists/$playlistId/download');
       return PlaylistDownloadManifest.fromJson(response.data);
@@ -1244,7 +1470,9 @@ class ZephyrApi {
   }
 
   /// Trigger playlist batch download (POST /api/playlists/{id}/download)
-  Future<PlaylistDownloadManifest> triggerPlaylistDownload(dynamic playlistId) async {
+  Future<PlaylistDownloadManifest> triggerPlaylistDownload(
+    dynamic playlistId,
+  ) async {
     try {
       final response = await _dio.post('/api/playlists/$playlistId/download');
       return PlaylistDownloadManifest.fromJson(response.data);
@@ -1264,7 +1492,9 @@ class ZephyrApi {
   }
 
   /// Sync offline listening history records (POST /api/history/sync)
-  Future<Map<String, dynamic>> syncHistory(List<Map<String, dynamic>> listens) async {
+  Future<Map<String, dynamic>> syncHistory(
+    List<Map<String, dynamic>> listens,
+  ) async {
     try {
       final response = await _dio.post(
         '/api/history/sync',

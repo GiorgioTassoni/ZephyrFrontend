@@ -1307,10 +1307,10 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                     ),
                     IconButton(
                       icon: Icon(
-                        state.queueMode == 'repeat_one'
+                        state.repeatMode == 'one'
                             ? Icons.repeat_one
                             : Icons.repeat,
-                        color: state.queueMode != 'normal'
+                        color: state.repeatMode != 'off'
                             ? ZephyrColors.primary
                             : ZephyrColors.textDim,
                         size: 20,

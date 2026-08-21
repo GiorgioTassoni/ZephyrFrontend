@@ -11,6 +11,8 @@ class ArtistLinks extends ConsumerWidget {
   final TextOverflow overflow;
   final int maxLines;
   final VoidCallback? onNavigate;
+  /// When false, artist names render as plain text (no tap-to-navigate).
+  final bool linkable;
 
   const ArtistLinks({
     super.key,
@@ -19,6 +21,7 @@ class ArtistLinks extends ConsumerWidget {
     this.overflow = TextOverflow.ellipsis,
     this.maxLines = 1,
     this.onNavigate,
+    this.linkable = true,
   });
 
   static Future<void> handleTap({
@@ -84,7 +87,7 @@ class ArtistLinks extends ConsumerWidget {
     final validArtists = track.artists.where((a) => a.trim().isNotEmpty).toList();
     final artistDisplayString = validArtists.isNotEmpty ? validArtists.join(', ') : 'Unknown Artist';
 
-    if (validArtists.isEmpty) {
+    if (validArtists.isEmpty || !linkable) {
       return Text(
         artistDisplayString,
         style: baseStyle,

@@ -268,14 +268,11 @@ class QueueScreen extends ConsumerWidget {
           final track = tracks[index];
           final keyString = '${track.videoId}_${isUserQueue ? "user" : "base"}_$index';
 
-          return ReorderableDragStartListener(
+          return _QueueTrackTile(
             key: ValueKey(keyString),
+            track: track,
             index: index,
-            child: _QueueTrackTile(
-              track: track,
-              index: index,
-              onDelete: () => onDelete(index),
-            ),
+            onDelete: () => onDelete(index),
           );
         },
       ),
@@ -295,6 +292,7 @@ class _QueueTrackTile extends StatefulWidget {
   final VoidCallback onDelete;
 
   const _QueueTrackTile({
+    super.key,
     required this.track,
     required this.index,
     required this.onDelete,
@@ -333,23 +331,17 @@ class _QueueTrackTileState extends State<_QueueTrackTile> {
               margin: const EdgeInsets.only(bottom: 4),
               child: Row(
                 children: [
-                  // Drag handle or Index number
+                  // Track index number
                   SizedBox(
                     width: 32,
                     child: Center(
-                      child: _isHovered
-                          ? const Icon(
-                              Icons.drag_handle,
-                              color: ZephyrColors.textDim,
-                              size: 20,
-                            )
-                          : Text(
-                              '${widget.index + 1}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: ZephyrColors.textMuted,
-                              ),
-                            ),
+                      child: Text(
+                        '${widget.index + 1}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: ZephyrColors.textMuted,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -377,6 +369,7 @@ class _QueueTrackTileState extends State<_QueueTrackTile> {
                         const SizedBox(height: 4),
                         ArtistLinks(
                           track: widget.track,
+                          linkable: false,
                           style: const TextStyle(
                             fontSize: 12,
                             color: ZephyrColors.textDim,
@@ -385,36 +378,40 @@ class _QueueTrackTileState extends State<_QueueTrackTile> {
                       ],
                     ),
                   ),
-                  // Actions (Delete button on hover)
-                  SizedBox(
-                    width: 80,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        if (widget.track.duration != null)
-                          Text(
-                            _formatDuration(widget.track.duration!),
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: ZephyrColors.textDim,
-                            ),
-                          ),
-                        const SizedBox(width: 12),
-                        if (_isHovered)
-                          IconButton(
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: ZephyrColors.error,
-                              size: 18,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            tooltip: 'Remove from Queue',
-                            onPressed: widget.onDelete,
-                          )
-                        else
-                          const SizedBox(width: 18),
-                      ],
+                  // Actions (duration + delete on hover)
+                  if (widget.track.duration != null)
+                    Text(
+                      _formatDuration(widget.track.duration!),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: ZephyrColors.textDim,
+                      ),
+                    ),
+                  if (_isHovered) ...[
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: ZephyrColors.error,
+                        size: 18,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      tooltip: 'Remove from Queue',
+                      onPressed: widget.onDelete,
+                    ),
+                  ],
+                  // Drag handle — only this initiates reorder, not the whole tile
+                  const SizedBox(width: 8),
+                  ReorderableDragStartListener(
+                    index: widget.index,
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                      child: Icon(
+                        Icons.drag_handle,
+                        color: ZephyrColors.textMuted,
+                        size: 20,
+                      ),
                     ),
                   ),
                 ],

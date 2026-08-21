@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
 import '../models/models.dart';
 import '../utils/offline_storage.dart';
+import '../utils/app_logger.dart';
 import 'auth_provider.dart';
 import 'player_provider.dart';
 
@@ -202,38 +203,22 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   // --- Favorites ---
 
-  static String _cleanTitle(String t) {
-    return t
-        .toLowerCase()
-        .replaceAll(RegExp(r'\s*[\(\[\{].*?[\)\]\}]'), '')
-        .replaceAll(RegExp(r'\s*-\s*.*$'), '')
-        .trim();
+  /// Returns the canonical ID used by the backend for favorite identity.
+  /// Numeric Deezer IDs are normalized to the documented `dz_<id>` form;
+  /// every other ID remains an exact, case-sensitive identifier.
+  static String _canonicalTrackId(String videoId) {
+    final id = videoId.trim();
+    if (id.isEmpty) return '';
+    return RegExp(r'^\d+$').hasMatch(id) ? 'dz_$id' : id;
   }
 
+  /// Favorite state is identity-based only. Titles and artist names are not
+  /// unique enough to identify a track (versions, remixes, and live recordings
+  /// commonly share similar metadata).
   bool isFavorite(String videoId, {String? title, List<String>? artists}) {
-    if (videoId.trim().isEmpty) return false;
-    final targetRaw = videoId.trim();
-    final targetClean = targetRaw.replaceAll('dz_', '');
-
-    return state.favorites.any((t) {
-      final tVideoId = t.videoId.trim();
-      if (tVideoId == targetRaw) return true;
-      final tVideoIdClean = tVideoId.replaceAll('dz_', '');
-      if (targetClean.isNotEmpty && tVideoIdClean == targetClean) return true;
-
-      if (title != null && title.trim().isNotEmpty && artists != null && artists.isNotEmpty) {
-        final tTitleClean = _cleanTitle(t.title);
-        final targetTitleClean = _cleanTitle(title);
-        if (tTitleClean.isNotEmpty && tTitleClean == targetTitleClean) {
-          final tArtist = t.artists.isNotEmpty ? t.artists.first.toLowerCase().trim() : '';
-          final targetArtist = artists.first.toLowerCase().trim();
-          if (tArtist.isNotEmpty && targetArtist.isNotEmpty && (tArtist == targetArtist || tArtist.contains(targetArtist) || targetArtist.contains(tArtist))) {
-            return true;
-          }
-        }
-      }
-      return false;
-    });
+    final targetId = _canonicalTrackId(videoId);
+    if (targetId.isEmpty) return false;
+    return state.favorites.any((track) => _canonicalTrackId(track.videoId) == targetId);
   }
 
   /// Resets pagination and fetches the first page of favorites (offset=0).
@@ -301,21 +286,10 @@ class LibraryNotifier extends Notifier<LibraryState> {
     // at the top of the list (matching server order: newest first).
     final currentFavorites = List<Track>.from(state.favorites);
     if (isFav) {
-      final targetCleanId = videoId.replaceAll('dz_', '').trim();
-      final targetCleanTitle = _cleanTitle(track.title);
-      final targetArtist = track.artists.isNotEmpty ? track.artists.first.toLowerCase().trim() : '';
-      currentFavorites.removeWhere((t) {
-        if (t.videoId == videoId) return true;
-        final tCleanId = t.videoId.replaceAll('dz_', '').trim();
-        if (targetCleanId.isNotEmpty && tCleanId == targetCleanId) return true;
-        if (targetCleanTitle.isNotEmpty && _cleanTitle(t.title) == targetCleanTitle) {
-          final tArtist = t.artists.isNotEmpty ? t.artists.first.toLowerCase().trim() : '';
-          if (tArtist.isNotEmpty && targetArtist.isNotEmpty && (tArtist == targetArtist || tArtist.contains(targetArtist) || targetArtist.contains(tArtist))) {
-            return true;
-          }
-        }
-        return false;
-      });
+      final targetId = _canonicalTrackId(videoId);
+      currentFavorites.removeWhere(
+        (favorite) => _canonicalTrackId(favorite.videoId) == targetId,
+      );
     } else {
       currentFavorites.insert(
         0,
@@ -328,6 +302,11 @@ class LibraryNotifier extends Notifier<LibraryState> {
       favorites: currentFavorites,
       totalFavoritesCount: newTotal,
     );
+
+    AppLogger.instance.logFavorite('toggle_requested', data: {
+      'trackId': _canonicalTrackId(videoId),
+      'wasFavorite': isFav,
+    });
 
     try {
       if (isFav) {

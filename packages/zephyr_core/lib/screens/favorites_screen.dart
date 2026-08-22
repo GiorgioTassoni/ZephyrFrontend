@@ -34,6 +34,11 @@ class _ScrollBubbleData {
 }
 
 class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
+  static const Map<String, dynamic> _contextRef = {
+    'type': 'favorites',
+    'order': 'as_listed',
+  };
+
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -410,6 +415,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                                     processedFavorites,
                                     isNewQueue: true,
                                     origin: 'context',
+                                    contextRef: _contextRef,
                                   )
                               : null,
                           child: const SizedBox(
@@ -441,6 +447,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                                   processedFavorites,
                                   isNewQueue: true,
                                   origin: 'context',
+                                  contextRef: {..._contextRef, 'order': 'shuffled'},
                                 );
                               }
                             : null,
@@ -598,6 +605,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                         key: ValueKey(track.videoId),
                         track: track,
                         queue: processedFavorites,
+                        contextRef: _contextRef,
                         showFavoriteButton: false,
                         showDownloadIndicator: true,
                       );

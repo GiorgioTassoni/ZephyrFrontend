@@ -87,6 +87,10 @@ class ZephyrApi {
         'radio_status',
         'radio_request_id',
         'radio_generation',
+        'context_total',
+        'context_cursor',
+        'context_order_active',
+        'context_status',
       ];
       for (final field in fields) {
         if (payload.containsKey(field)) summary[field] = payload[field];
@@ -662,6 +666,7 @@ class ZephyrApi {
     List<Map<String, dynamic>>? userQueue,
     String? origin,
     bool? seedRadio,
+    Map<String, dynamic>? contextRef,
   }) async {
     try {
       final body = <String, dynamic>{};
@@ -672,6 +677,7 @@ class ZephyrApi {
       if (isPlaying != null) body['is_playing'] = isPlaying;
       if (queueMode != null) body['queue_mode'] = queueMode;
       if (queue != null) body['queue'] = queue;
+      if (contextRef != null) body['context_ref'] = contextRef;
       if (userQueue != null) body['user_queue'] = userQueue;
       if (origin != null && (origin == 'queue' || origin == 'context')) {
         body['origin'] = origin;
@@ -701,6 +707,7 @@ class ZephyrApi {
     int? positionMs,
     String? origin,
     bool? seedRadio,
+    Map<String, dynamic>? contextRef,
   }) async {
     try {
       final body = <String, dynamic>{'action': action};
@@ -709,6 +716,7 @@ class ZephyrApi {
       if (origin != null && (origin == 'queue' || origin == 'context')) {
         body['origin'] = origin;
       }
+      if (contextRef != null) body['context_ref'] = contextRef;
       if (seedRadio != null) body['seed_radio'] = seedRadio;
 
       final response = await _dio.post('/api/player/command', data: body);
@@ -986,6 +994,30 @@ class ZephyrApi {
       return data;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) return null; // History empty signal
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> togglePlayerContext() async {
+    try {
+      final response = await _dio.post('/api/player/context/toggle');
+      return response.data is Map<String, dynamic>
+          ? response.data
+          : Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return <String, dynamic>{};
+      throw _handleDioError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> reshufflePlayerContext() async {
+    try {
+      final response = await _dio.post('/api/player/context/reshuffle');
+      return response.data is Map<String, dynamic>
+          ? response.data
+          : Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return <String, dynamic>{};
       throw _handleDioError(e);
     }
   }

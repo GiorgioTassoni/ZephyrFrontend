@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:audioplayers/audioplayers.dart' as ap;
+import 'package:dio/dio.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
@@ -101,6 +102,11 @@ class ZephyrPlayerState {
   final int? radioGeneration;
   final String? radioErrorCode;
   final String? radioErrorMessage;
+  final Map<String, dynamic>? contextRef;
+  final int? contextTotal;
+  final int? contextCursor;
+  final String? contextOrderActive;
+  final String? contextStatus;
   final bool isShuffled;
   final List<Map<String, dynamic>> connectedDevices;
   final String? activeDeviceId;
@@ -132,6 +138,11 @@ class ZephyrPlayerState {
     this.radioGeneration,
     this.radioErrorCode,
     this.radioErrorMessage,
+    this.contextRef,
+    this.contextTotal,
+    this.contextCursor,
+    this.contextOrderActive,
+    this.contextStatus,
     this.isShuffled = false,
     this.connectedDevices = const [],
     this.activeDeviceId,
@@ -191,6 +202,13 @@ class ZephyrPlayerState {
     String? radioErrorCode,
     String? radioErrorMessage,
     bool clearRadioError = false,
+    Map<String, dynamic>? contextRef,
+    bool clearContextRef = false,
+    int? contextTotal,
+    int? contextCursor,
+    String? contextOrderActive,
+    String? contextStatus,
+    bool clearContextMetadata = false,
     bool? isShuffled,
     String? errorMessage,
     bool? isLoading,
@@ -230,6 +248,19 @@ class ZephyrPlayerState {
       radioErrorMessage: clearRadioError
           ? null
           : (radioErrorMessage ?? this.radioErrorMessage),
+      contextRef: clearContextRef ? null : (contextRef ?? this.contextRef),
+      contextTotal: clearContextMetadata
+          ? null
+          : (contextTotal ?? this.contextTotal),
+      contextCursor: clearContextMetadata
+          ? null
+          : (contextCursor ?? this.contextCursor),
+      contextOrderActive: clearContextMetadata
+          ? null
+          : (contextOrderActive ?? this.contextOrderActive),
+      contextStatus: clearContextMetadata
+          ? null
+          : (contextStatus ?? this.contextStatus),
       isShuffled: isShuffled ?? this.isShuffled,
       errorMessage: errorMessage ?? this.errorMessage,
       isLoading: isLoading ?? this.isLoading,
@@ -280,6 +311,19 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   bool _ownershipReleased = false;
   bool _localPlaybackSuppressed = true;
   bool _hasLocalAudioSource = false;
+  // Guard for the one-shot queue re-upload after a server-side dead queue.
+  bool _queueResyncAttempted = false;
+  // Timestamp of the most recent locally-initiated playback start/resume.
+  // Used to ignore stale server pause echoes during track transitions
+  // (micro-stutter: start -> spurious pause -> resume within ~1s).
+  DateTime? _lastLocalPlaybackStartAt;
+  // Timestamp of the most recent local user-queue mutation (add/remove/
+  // reorder/clear). Server user_queue snapshots are ignored briefly after
+  // a mutation so a stale in-flight echo cannot visually revert the edit.
+  DateTime? _lastUserQueueMutationAt;
+  // Last track upgraded to its downloaded file via the SSE completion
+  // event; guards against replayed events restarting the stream repeatedly.
+  String? _lastDownloadUpgradeTrackId;
   String? _ownerTrackStartId;
   String? _pendingOwnerTrackId;
   Timer? _cursorTimer;
@@ -383,6 +427,12 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
   StreamSubscription? _sseSub;
   Future<void> _snapshotChain = Future<void>.value();
+
+  /// Serializes fire-and-forget context-queue uploads so a slow upload for
+  /// an older play request can never land after a newer one and restore
+  /// stale queue contents server-side.
+  Future<Map<String, dynamic>> _contextUploadChain =
+      Future<Map<String, dynamic>>.value(<String, dynamic>{});
   Future<void>? _trackTransitionInFlight;
   String? _trackTransitionAction;
   DateTime? _lastAppliedServerUpdateAt;
@@ -811,14 +861,25 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
                     _api.notifyLyricsReady(state.currentTrack!.videoId);
                     _api.notifyLyricsReady(trackId);
 
-                    // If waiting for stream or stalled at 0:00, initiate playback now that download is complete
-                    if (state.isPlayerDevice &&
-                        (state.isLoading ||
-                            !_hasLocalAudioSource ||
-                            (zephyrAudioHandler != null &&
-                                (!zephyrAudioHandler!.player.playing ||
-                                    zephyrAudioHandler!.player.position ==
-                                        Duration.zero)))) {
+                    // Restart/upgrade the stream now that the download is
+                    // complete: covers stalled playback AND an actively
+                    // streaming proxy source that should switch to the
+                    // downloaded file. A deliberate user pause (not loading,
+                    // local source, position > 0) is respected.
+                    final bool shouldRestartStream =
+                        state.isPlaying ||
+                        state.isLoading ||
+                        !_hasLocalAudioSource ||
+                        (zephyrAudioHandler != null &&
+                            (!zephyrAudioHandler!.player.playing ||
+                                zephyrAudioHandler!.player.position ==
+                                    Duration.zero));
+                    if (state.isPlayerDevice && shouldRestartStream) {
+                      // One upgrade per completed-download event: replayed
+                      // SSE events must not restart the stream repeatedly.
+                      if (_lastDownloadUpgradeTrackId == trackId) return;
+                      _lastDownloadUpgradeTrackId = trackId;
+                      final resumePos = state.position;
                       debugPrint(
                         '⚡ [PlayerProvider] Track $trackId download completed on server! Requesting stream...',
                       );
@@ -826,6 +887,11 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
                         enrichedTrack,
                         state.queue,
                         immediate: true,
+                        // Keep the listener mid-song when upgrading an
+                        // actively-playing stream to the downloaded file.
+                        initialPosition: resumePos > Duration.zero
+                            ? resumePos
+                            : null,
                       );
                     }
                   }
@@ -838,7 +904,15 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
                       state.currentTrack != null &&
                       _isSameTrack(state.currentTrack!.videoId, trackId) &&
                       (state.isLoading || !_hasLocalAudioSource)) {
-                    await playTrack(updatedTrack, state.queue, immediate: true);
+                    final fallbackPos = state.position;
+                    await playTrack(
+                      updatedTrack,
+                      state.queue,
+                      immediate: true,
+                      initialPosition: fallbackPos > Duration.zero
+                          ? fallbackPos
+                          : null,
+                    );
                   }
                 });
           }
@@ -947,6 +1021,11 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     final rawRadioStatus = snapshot['radio_status']?.toString();
     final hasRadioStatus = snapshot.containsKey('radio_status');
     final rawQueueMode = snapshot['queue_mode']?.toString();
+    final rawContextRef = snapshot['context_ref'];
+    final Map<String, dynamic>? serverContextRef = rawContextRef is Map
+        ? Map<String, dynamic>.from(rawContextRef)
+        : null;
+    final serverContextOrder = snapshot['context_order_active']?.toString();
     final radioError = snapshot['radio_error'];
     final radioErrorMap = radioError is Map
         ? Map<String, dynamic>.from(radioError)
@@ -954,7 +1033,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     if (hasRadioStatus ||
         snapshot.containsKey('radio_request_id') ||
         rawQueueMode == 'radio' ||
-        rawQueueMode == 'context') {
+        rawQueueMode == 'context' ||
+        serverContextRef != null) {
       state = state.copyWith(
         queueMode: rawQueueMode == 'radio' || rawQueueMode == 'context'
             ? rawQueueMode
@@ -972,6 +1052,20 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         radioErrorCode: radioErrorMap?['code']?.toString(),
         radioErrorMessage: radioErrorMap?['message']?.toString(),
         clearRadioError: hasRadioStatus && rawRadioStatus != 'failed',
+        contextRef: serverContextRef,
+        clearContextRef:
+            rawQueueMode == 'radio' ||
+            (rawQueueMode == 'context' && serverContextRef == null),
+        clearContextMetadata:
+            rawQueueMode == 'radio' ||
+            (rawQueueMode == 'context' && serverContextRef == null),
+        contextTotal: (snapshot['context_total'] as num?)?.toInt(),
+        contextCursor: (snapshot['context_cursor'] as num?)?.toInt(),
+        contextOrderActive: snapshot['context_order_active']?.toString(),
+        contextStatus: snapshot['context_status']?.toString(),
+        isShuffled: serverContextOrder == 'shuffled'
+            ? true
+            : (serverContextOrder == 'linear' ? false : null),
       );
       AppLogger.instance.logQueue(
         'radio_status_updated',
@@ -1080,6 +1174,9 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         currentTrack: initialTrack,
         queue: queueToUse,
         originalQueue: state.isShuffled ? state.originalQueue : queueToUse,
+        // Install the persisted user queue on startup so it is visible
+        // before any later snapshot happens to carry it.
+        userQueue: serverUserQueueTracks ?? state.userQueue,
         isPlaying: false,
         position: Duration(milliseconds: posMs),
         duration: trackChanged ? Duration.zero : null,
@@ -1193,7 +1290,9 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         currentTrack: currentTrack,
         queue: queueToUse,
         originalQueue: state.isShuffled ? state.originalQueue : queueToUse,
-        userQueue: serverUserQueueTracks ?? state.userQueue,
+        // Same grace protection as the owner path so a controller device's
+        // own recent mutation is not reverted by a pre-mutation snapshot.
+        userQueue: _resolveServerUserQueue(serverUserQueueTracks),
         isPlaying: serverPlaying,
         isLoading: false,
         position: Duration(milliseconds: projectedMs),
@@ -1221,6 +1320,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     final shouldApplyServerQueue =
         serverQueueTracks != null &&
         ((isRadioSnapshot && !state.isShuffled) ||
+            (serverContextRef != null) ||
             (!state.isShuffled && state.queue.length <= 1));
     if (shouldApplyServerQueue) {
       final curTrack = state.currentTrack;
@@ -1245,9 +1345,21 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         posUpdatedAt != null &&
         (previousPositionUpdatedAt == null ||
             posUpdatedAt.isAfter(previousPositionUpdatedAt));
+    // Our own PUT echo carries a stale position (usually 0) with a newer
+    // timestamp; it must never seek the actively-playing local player back.
+    final isOwnEcho =
+        state.myDeviceId.isNotEmpty && activeId == state.myDeviceId;
+    // Same protection right after a locally-initiated start: an echo of our
+    // own start command must not rewind the stream to 0:00 (micro-stutter).
+    final startedLocallyJustNow =
+        _lastLocalPlaybackStartAt != null &&
+        DateTime.now().difference(_lastLocalPlaybackStartAt!) <
+            const Duration(milliseconds: 2000);
     final shouldApplyOwnerSeek =
         !isInitial &&
         !suppressOwnerPlayback &&
+        !isOwnEcho &&
+        !startedLocallyJustNow &&
         sameCurrentTrack &&
         hasNewPositionAnchor;
 
@@ -1258,7 +1370,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       historyCount: hCount,
       userQueue: (isStartup || isInitial)
           ? (serverUserQueueTracks ?? state.userQueue)
-          : state.userQueue,
+          : _resolveServerUserQueue(serverUserQueueTracks),
       // A marked connect/reconnect snapshot re-anchors the UI position. On
       // the first startup snapshot, keep playback paused by contract; on a
       // later reconnect, reflect the server's playing state without issuing
@@ -1407,8 +1519,16 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
             zephyrAudioHandler!.player.playing &&
             state.currentTrack != null);
 
+    final justStartedLocally =
+        _lastLocalPlaybackStartAt != null &&
+        DateTime.now().difference(_lastLocalPlaybackStartAt!) <
+            const Duration(milliseconds: 1500);
     final serverPauseChanged =
-        !serverPlaying && _lastKnownServerPlaying != false;
+        !serverPlaying &&
+        _lastKnownServerPlaying != false &&
+        // A stale/own-echo snapshot (e.g. radio seed broadcast) must not
+        // cancel playback we started locally moments ago.
+        !justStartedLocally;
     final serverPlayChanged =
         serverPlaying &&
         state.isPlaying != true &&
@@ -1421,10 +1541,17 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         (serverPlayChanged || (!isAudioActiveLocally && !state.isPlaying));
 
     if (!suppressOwnerPlayback && (serverPauseChanged || shouldHandlePlay)) {
-      _lastKnownServerPlaying = serverPlaying;
+      // While a fresh local start is protected from stale pause echoes,
+      // do not consume the server's pause edge either: a genuine remote
+      // pause arriving inside the grace window must still be applicable
+      // by a later snapshot.
+      if (!justStartedLocally) {
+        _lastKnownServerPlaying = serverPlaying;
+      }
       if (serverPlaying) {
         if (isAudioActiveLocally) {
           _localPlaybackSuppressed = false;
+          _lastLocalPlaybackStartAt = DateTime.now();
           try {
             await zephyrAudioHandler?.play();
           } catch (_) {}
@@ -1493,8 +1620,11 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
             ? await _api.sendPlayerCommand(action: action)
             : await _api.nextPlayerTrack();
       } else if (action == 'previous') {
-        // Keep the established previous endpoint for both device roles.
-        response = await _api.previousPlayerTrack();
+        // Remote devices send transport intents through the command endpoint;
+        // only the owner executes the dedicated transition endpoint locally.
+        response = !state.isPlayerDevice
+            ? await _api.sendPlayerCommand(action: action)
+            : await _api.previousPlayerTrack();
       } else {
         String validAction = action;
         if (action == 'resume') {
@@ -1907,6 +2037,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     String? origin,
     Duration? initialPosition,
     bool syncServerState = true,
+    Map<String, dynamic>? contextRef,
   }) async {
     // A new explicit play invalidates any pending end-of-radio retry.
     _nextWaitingForRadioTrackId = null;
@@ -1921,6 +2052,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         'queueLength': playQueue.length,
         'isNewQueue': isNewQueue,
         'origin': origin,
+        'contextRef': contextRef,
         'initialPosMs': initialPosition?.inMilliseconds,
       },
     );
@@ -1951,6 +2083,11 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           queueMode: shouldSeedRadio ? 'radio' : null,
           radioStatus: shouldSeedRadio ? 'pending' : null,
           clearRadioError: shouldSeedRadio,
+          contextRef: isNewQueue ? contextRef : null,
+          clearContextRef: shouldSeedRadio ||
+              (isNewQueue && contextRef == null),
+          clearContextMetadata: shouldSeedRadio ||
+              (isNewQueue && contextRef == null),
           currentIndex: 0,
           position: Duration.zero,
           duration: track.duration ?? Duration.zero,
@@ -1963,6 +2100,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           action: 'play_track',
           currentTrackId: track.videoId,
           origin: origin == 'queue' || origin == 'context' ? origin : null,
+          contextRef: isNewQueue ? contextRef : null,
           seedRadio: shouldSeedRadio ? true : null,
         );
         if (response != null && response.isNotEmpty) {
@@ -1976,10 +2114,13 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
 
     final requestId = ++_playRequestId;
     final playbackGeneration = ++_playbackGeneration;
+    // A brand-new play request makes any previous dead-end recovery stale.
+    _queueResyncAttempted = false;
     _pendingOwnerTrackId = track.videoId;
     _skipDebounceTimer?.cancel();
     _localPlaybackSuppressed = false;
     _hasLocalAudioSource = false;
+    _lastLocalPlaybackStartAt = DateTime.now();
 
     final prevState = state;
 
@@ -2003,6 +2144,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     List<Track> queueToSet;
     List<Track> originalQueueToSet;
     int targetIndex = 0;
+    final bool requestedContextShuffled =
+        isNewQueue && contextRef?['order']?.toString() == 'shuffled';
 
     final bool isFromCurrentQueue =
         origin == 'queue' ||
@@ -2010,8 +2153,34 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
             !isNewQueue &&
             state.queue.isNotEmpty &&
             state.queue.any((t) => _isSameTrack(t.videoId, track.videoId)));
+    final bool isContextPlayNow =
+        origin == 'context' && !isNewQueue && state.contextRef != null;
 
-    if (isFromCurrentQueue) {
+    if (isContextPlayNow) {
+      // A playlist-page click is play-now: remove only the selected track and
+      // preserve every other upcoming item in its existing order.
+      final previousTrackId = state.currentTrack?.videoId;
+      final remaining = state.queue
+          .where(
+            (t) =>
+                !_isSameTrack(t.videoId, track.videoId) &&
+                (previousTrackId == null ||
+                    !_isSameTrack(t.videoId, previousTrackId)),
+          )
+          .toList();
+      final originalRemaining =
+          (state.originalQueue.isNotEmpty ? state.originalQueue : state.queue)
+              .where(
+                (t) =>
+                    !_isSameTrack(t.videoId, track.videoId) &&
+                    (previousTrackId == null ||
+                        !_isSameTrack(t.videoId, previousTrackId)),
+              )
+              .toList();
+      queueToSet = [track, ...remaining];
+      originalQueueToSet = [track, ...originalRemaining];
+      targetIndex = 0;
+    } else if (isFromCurrentQueue) {
       queueToSet = state.queue;
       originalQueueToSet = state.originalQueue.isNotEmpty
           ? state.originalQueue
@@ -2025,7 +2194,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       final baseList = playQueue.isNotEmpty ? playQueue : [track];
       originalQueueToSet = List<Track>.from(baseList);
 
-      if (state.isShuffled && baseList.length > 1) {
+      if ((state.isShuffled || requestedContextShuffled) &&
+          baseList.length > 1) {
         final remaining =
             baseList
                 .where((t) => !_isSameTrack(t.videoId, track.videoId))
@@ -2053,7 +2223,63 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       position: initialPosition ?? Duration.zero,
       duration: initialDur,
       errorMessage: null,
+      contextRef: isNewQueue ? contextRef : null,
+      clearContextRef: origin == 'search' ||
+          origin == 'radio' ||
+          (isNewQueue && contextRef == null),
+      clearContextMetadata: origin == 'search' ||
+          origin == 'radio' ||
+          (isNewQueue && contextRef == null),
+      isShuffled: contextRef != null ? requestedContextShuffled : null,
     );
+
+    // FIX A: guarantee the server receives the context queue for a brand-new
+    // queue. The success-gated sync deeper in this method can be skipped by
+    // playback-generation checks, which previously left the server queue
+    // empty and dead-ended every skip with a 404 loop.
+    if (syncServerState &&
+        isNewQueue &&
+        origin != 'search' &&
+        origin != 'radio' &&
+        contextRef == null &&
+        queueToSet.length > 1) {
+      final uploadMaps = _queueToMaps(queueToSet);
+      final genAtSchedule = playbackGeneration;
+      final uploadDeviceId = state.isPlayerDevice ? state.myDeviceId : null;
+      final uploadDeviceName = state.isPlayerDevice ? state.myDeviceName : null;
+      // Serialized + generation-checked: a superseded play request's upload
+      // is dropped instead of racing a newer one (stale-queue overwrite).
+      _contextUploadChain = _contextUploadChain
+          .then((_) async {
+            if (_playbackGeneration != genAtSchedule) {
+              return <String, dynamic>{};
+            }
+            final res = await _api.updatePlayerState(
+              deviceId: uploadDeviceId,
+              deviceName: uploadDeviceName,
+              currentTrackId: track.videoId,
+              queueMode: 'context',
+              queue: uploadMaps,
+              isPlaying: true,
+            );
+            AppLogger.instance.logQueue(
+              'context_queue_state_uploaded',
+              data: {
+                'trackId': track.videoId,
+                'queueLength': uploadMaps.length,
+              },
+            );
+            return res;
+          })
+          .catchError((e) {
+            AppLogger.instance.logQueue(
+              'context_queue_upload_failed',
+              data: {'trackId': track.videoId, 'error': e.toString()},
+            );
+            return <String, dynamic>{};
+          });
+      unawaited(_contextUploadChain);
+    }
 
     if (!_hasUsableTrackTitle(track.title) ||
         track.artists.isEmpty ||
@@ -2239,6 +2465,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       } on ProviderUnavailableException catch (e) {
         if (_playRequestId != requestId) return;
         state = prevState.copyWith(isLoading: false, errorMessage: e.message);
+        final providerCtx = rootNavigatorKey.currentContext;
+        if (providerCtx != null && providerCtx.mounted) {
+          ZephyrToast.show(providerCtx, e.message, isError: true);
+        }
         return;
       } on RateLimitException catch (e) {
         if (_playRequestId != requestId) return;
@@ -2282,6 +2512,32 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           return;
         }
 
+        // The proxy error may land slightly after the audio engine fails.
+        // Wait briefly for it before giving up to the generic error path,
+        // otherwise match failures surface as silent generic errors.
+        if (finalTrack.localPath == null) {
+          final lateProxyError = await _api.waitForProxyStreamError(
+            finalTrack.videoId,
+          );
+          if (lateProxyError is ResolutionRequiredException) {
+            state = prevState.copyWith(
+              isLoading: false,
+              errorMessage:
+                  'Selection required for "${lateProxyError.title}". Tap to choose match.',
+            );
+            _triggerResolutionModal(lateProxyError, finalTrack, playQueue);
+            return;
+          }
+          if (lateProxyError is TrackUnavailableException) {
+            state = prevState.copyWith(
+              isLoading: false,
+              errorMessage: lateProxyError.message,
+            );
+            _triggerResolutionModal(lateProxyError, finalTrack, playQueue);
+            return;
+          }
+        }
+
         lastError = e;
       }
 
@@ -2295,6 +2551,15 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           isLoading: false,
           errorMessage: 'Playback error: ${lastError ?? "Stream unavailable"}',
         );
+        // Match failed completely: tell the user instead of failing silently.
+        final failCtx = rootNavigatorKey.currentContext;
+        if (failCtx != null && failCtx.mounted) {
+          ZephyrToast.show(
+            failCtx,
+            'Failed to match song, try to Report Wrong Match',
+            isError: true,
+          );
+        }
       } else {
         _lastTrackId = finalTrack.videoId;
         _hasRecordedCurrentTrack = false;
@@ -2385,13 +2650,22 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
             final String mode = isContextQueue ? 'context' : 'radio';
 
             if (isContextQueue) {
-              final List<Track> baseQueue = state.isShuffled
+              final List<Track> baseQueue = isContextPlayNow
                   ? state.queue
                         .where(
                           (t) => !_isSameTrack(t.videoId, finalTrack.videoId),
                         )
                         .toList()
-                  : remaining;
+                  : (state.isShuffled
+                        ? state.queue
+                              .where(
+                                (t) => !_isSameTrack(
+                                  t.videoId,
+                                  finalTrack.videoId,
+                                ),
+                              )
+                              .toList()
+                        : remaining);
 
               final queueMaps = baseQueue
                   .take(50)
@@ -2413,7 +2687,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
                 deviceName: state.isPlayerDevice ? state.myDeviceName : null,
                 currentTrackId: finalTrack.videoId,
                 queueMode: mode,
-                queue: queueMaps,
+                queue: contextRef == null && !isContextPlayNow
+                    ? queueMaps
+                    : null,
+                contextRef: isNewQueue ? contextRef : null,
                 userQueue: userQueueMaps,
                 isPlaying: true,
                 origin: origin == 'queue'
@@ -2532,6 +2809,27 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     }
   }
 
+  /// Shared queue serialization for PUT /api/player/state payloads.
+  List<Map<String, dynamic>> _queueToMaps(
+    List<Track> tracks, {
+    int limit = 50,
+  }) {
+    return tracks
+        .take(limit)
+        .map(
+          (t) => {
+            'track_id': t.videoId,
+            'title': t.title,
+            'artists': t.artists,
+            'album': t.album,
+            'duration_seconds': t.duration?.inSeconds ?? 0,
+            'cover_url': t.coverUrl,
+            'stream_url': '/api/tracks/stream/${t.videoId}',
+          },
+        )
+        .toList();
+  }
+
   Future<void> _seedRadioInBackground({
     required Track track,
     required List<Map<String, dynamic>> userQueue,
@@ -2545,7 +2843,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         queueMode: 'radio',
         seedRadio: true,
         userQueue: userQueue,
-        isPlaying: false,
+        // Playback is actively starting when this seed fires; advertising
+        // is_playing=false makes the SSE echo pause the fresh stream and
+        // forces the user to manually resume (first-search stop bug).
+        isPlaying: true,
       );
 
       AppLogger.instance.logQueue(
@@ -2848,6 +3149,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     if (state.currentTrack != null) {
       _suppressPersistedStartupPlayback = false;
       _localPlaybackSuppressed = false;
+      _lastLocalPlaybackStartAt = DateTime.now();
       final currentPos = state.position;
       state = state.copyWith(isPlaying: true);
       if (_isInitialLoad) {
@@ -3167,6 +3469,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           },
         );
         await _enqueueServerSnapshot(nextRes, forceTrackTransition: true);
+        _queueResyncAttempted = false;
         final httpStatus = (nextRes['_http_status'] as num?)?.toInt();
         if (httpStatus == 202 &&
             nextRes['radio_status']?.toString() == 'pending') {
@@ -3220,15 +3523,114 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         data: {'error': e.toString()},
       );
       debugPrint('Notice: Server player next notice: $e');
+      // FIX C: surface the backend's human-readable reason instead of
+      // failing silently.
+      _showQueueEndedMessage(e);
     }
 
-    // End of queue reached: stop cleanly
+    // FIX B: the server has nothing queued. Self-heal: if we still hold a
+    // local context queue, re-upload it once and retry the skip.
+    if (state.contextRef == null &&
+        state.queue.length > 1 &&
+        !_queueResyncAttempted) {
+      _queueResyncAttempted = true;
+      try {
+        await _api.updatePlayerState(
+          deviceId: state.isPlayerDevice ? state.myDeviceId : null,
+          deviceName: state.isPlayerDevice ? state.myDeviceName : null,
+          currentTrackId: state.currentTrack?.videoId,
+          queueMode: state.queueMode,
+          queue: _queueToMaps(state.queue),
+          isPlaying: true,
+        );
+        AppLogger.instance.logQueue(
+          'queue_resync_after_empty',
+          data: {
+            'queueLength': state.queue.length,
+            'queueMode': state.queueMode,
+          },
+        );
+        final retryRes = await _api.nextPlayerTrack();
+        // Re-arm regardless of outcome: a failed retry must not permanently
+        // disable self-heal for the rest of this queue session. Each skip
+        // retries at most once, so no loop is possible.
+        _queueResyncAttempted = false;
+        if (retryRes != null) {
+          await _enqueueServerSnapshot(retryRes, forceTrackTransition: true);
+          return;
+        }
+      } catch (e) {
+        _queueResyncAttempted = false;
+        AppLogger.instance.logQueue(
+          'queue_resync_failed',
+          data: {'error': e.toString()},
+        );
+      }
+    }
+
+    // True dead end: stop cleanly, then offer radio seeding from the current
+    // track instead of silently failing on every subsequent skip.
     AppLogger.instance.logQueue('play_next_queue_ended');
     await pause();
     state = state.copyWith(
       isPlaying: false,
       position: Duration.zero,
       isLoading: false,
+    );
+    _offerRadioFromCurrentTrack();
+  }
+
+  /// FIX C: show the backend's human-readable queue-ended reason (404
+  /// detail) as a toast; falls back to a generic message.
+  void _showQueueEndedMessage(Object e) {
+    String message = 'Playback queue ended';
+    if (e is DioException) {
+      final data = e.response?.data;
+      if (data is Map && data['detail'] != null) {
+        message = data['detail'].toString();
+      }
+    }
+    final ctx = rootNavigatorKey.currentContext;
+    if (ctx != null) {
+      ZephyrToast.show(ctx, message, isError: true);
+    }
+  }
+
+  /// FIX B: offer radio seeding from the current track when the queue is
+  /// unrecoverable (same seed_radio contract as search-origin playback).
+  void _offerRadioFromCurrentTrack() {
+    final ctx = rootNavigatorKey.currentContext;
+    if (ctx == null || state.currentTrack == null) return;
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      SnackBar(
+        content: const Text('Queue ended'),
+        action: SnackBarAction(
+          label: 'Start radio',
+          onPressed: () async {
+            try {
+              final res = await _api.updatePlayerState(
+                deviceId: state.isPlayerDevice ? state.myDeviceId : null,
+                deviceName: state.isPlayerDevice ? state.myDeviceName : null,
+                currentTrackId: state.currentTrack?.videoId,
+                queueMode: 'radio',
+                seedRadio: true,
+                isPlaying: true,
+              );
+              AppLogger.instance.logQueue(
+                'dead_end_radio_seeded',
+                data: {'trackId': state.currentTrack?.videoId},
+              );
+              await _enqueueServerSnapshot(res);
+              await resume();
+            } catch (e) {
+              AppLogger.instance.logQueue(
+                'dead_end_radio_seed_failed',
+                data: {'error': e.toString()},
+              );
+            }
+          },
+        ),
+      ),
     );
   }
 
@@ -3273,6 +3675,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           },
         );
         await _enqueueServerSnapshot(prevRes, forceTrackTransition: true);
+        _queueResyncAttempted = false;
         return;
       }
       AppLogger.instance.logQueue(
@@ -3372,7 +3775,25 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     }
   }
 
-  void toggleShuffle() {
+  Future<void> toggleShuffle() async {
+    // Context ordering is owned by the backend. Do not upload a client queue
+    // or reshuffle locally; the server persists the selected order and emits
+    // the authoritative snapshot to every device.
+    if (state.contextRef != null) {
+      try {
+        final response = await _api.togglePlayerContext();
+        if (response.isNotEmpty) {
+          await _enqueueServerSnapshot(response, forceTrackTransition: false);
+        }
+      } catch (e) {
+        AppLogger.instance.logQueue(
+          'context_toggle_failed',
+          data: {'error': e.toString()},
+        );
+      }
+      return;
+    }
+
     final currentlyShuffled = state.isShuffled;
     if (state.queue.isEmpty) {
       state = state.copyWith(isShuffled: !currentlyShuffled);
@@ -3435,6 +3856,21 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         .catchError((_) => <String, dynamic>{});
   }
 
+  Future<void> reshuffleContext() async {
+    if (state.contextRef == null) return;
+    try {
+      final response = await _api.reshufflePlayerContext();
+      if (response.isNotEmpty) {
+        await _enqueueServerSnapshot(response, forceTrackTransition: false);
+      }
+    } catch (e) {
+      AppLogger.instance.logQueue(
+        'context_reshuffle_failed',
+        data: {'error': e.toString()},
+      );
+    }
+  }
+
   void toggleQueueMode() {
     final nextMode = switch (state.repeatMode) {
       'off' => 'all',
@@ -3445,6 +3881,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   }
 
   void addToQueue(Track track) {
+    _lastUserQueueMutationAt = DateTime.now();
     final updatedUserQueue = List<Track>.from(state.userQueue)..add(track);
     if (state.currentTrack == null) {
       playTrack(track, [track]);
@@ -3455,6 +3892,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   }
 
   void reorderUserQueue(int oldIndex, int newIndex) {
+    _lastUserQueueMutationAt = DateTime.now();
     if (oldIndex < newIndex) {
       newIndex -= 1;
     }
@@ -3466,23 +3904,62 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       final item = list.removeAt(oldIndex);
       list.insert(newIndex, item);
       state = state.copyWith(userQueue: list);
+      // Persist the new order: without this, the next server snapshot
+      // (authoritative after the grace window) would visually revert the
+      // drag since reorder has no dedicated endpoint.
+      unawaited(
+        _api
+            .updatePlayerState(
+              userQueue: _queueToMaps(list, limit: list.length),
+            )
+            .catchError((_) => <String, dynamic>{}),
+      );
     }
   }
 
   void removeFromUserQueue(int index) {
+    _lastUserQueueMutationAt = DateTime.now();
     final list = List<Track>.from(state.userQueue);
     if (index >= 0 && index < list.length) {
       list.removeAt(index);
       state = state.copyWith(userQueue: list);
       if (list.isEmpty) {
         unawaited(_api.clearUserQueue().catchError((_) {}));
+      } else {
+        // Persist the shortened list so server snapshots do not resurrect
+        // the removed track (single-item removal has no dedicated endpoint).
+        unawaited(
+          _api
+              .updatePlayerState(
+                userQueue: _queueToMaps(list, limit: list.length),
+              )
+              .catchError((_) => <String, dynamic>{}),
+        );
       }
     }
   }
 
   void clearUserQueue() {
+    _lastUserQueueMutationAt = DateTime.now();
     state = state.copyWith(userQueue: const []);
     unawaited(_api.clearUserQueue().catchError((_) {}));
+  }
+
+  /// Resolve the authoritative user queue for owner-device snapshots.
+  ///
+  /// The server view (including tracks drained by /api/player/next) is
+  /// applied whenever the snapshot carries one, so consumption is reflected
+  /// immediately. Snapshots arriving within a short grace window after a
+  /// local mutation are ignored — they may predate the edit and would
+  /// otherwise visually revert it before the mutation's own broadcast.
+  List<Track> _resolveServerUserQueue(List<Track>? serverUserQueueTracks) {
+    if (serverUserQueueTracks == null) return state.userQueue;
+    final mutatedRecently =
+        _lastUserQueueMutationAt != null &&
+        DateTime.now().difference(_lastUserQueueMutationAt!) <
+            const Duration(milliseconds: 1500);
+    if (mutatedRecently) return state.userQueue;
+    return serverUserQueueTracks;
   }
 
   void reorderBaseQueue(int oldIndex, int newIndex) {

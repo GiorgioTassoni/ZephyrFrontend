@@ -111,6 +111,12 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     }
   }
 
+  Map<String, dynamic> get _contextRef => {
+    'type': 'album',
+    'id': widget.browseId,
+    'order': 'as_listed',
+  };
+
   void _playAllTracks() {
     if (_album == null || _album!.tracks == null || _album!.tracks!.isEmpty) return;
     final enrichedTracks = _album!.tracks!.map((t) => t.copyWith(
@@ -124,6 +130,7 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
       enrichedTracks,
       isNewQueue: true,
       origin: 'context',
+      contextRef: _contextRef,
     );
   }
 
@@ -135,15 +142,12 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
       albumId: t.albumId ?? _album!.id,
     )).toList();
 
-    final playerState = ref.read(playerProvider);
-    if (!playerState.isShuffled) {
-      ref.read(playerProvider.notifier).toggleShuffle();
-    }
     ref.read(playerProvider.notifier).playTrack(
       enrichedTracks.first,
       enrichedTracks,
       isNewQueue: true,
       origin: 'context',
+      contextRef: {..._contextRef, 'order': 'shuffled'},
     );
   }
 
@@ -500,6 +504,7 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                               album: t.album ?? _album!.name,
                               albumId: t.albumId ?? _album!.id,
                             )).toList(),
+                            contextRef: _contextRef,
                           ),
                         ),
                       ],

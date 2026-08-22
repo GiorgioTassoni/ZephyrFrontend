@@ -65,6 +65,12 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     }
   }
 
+  Map<String, dynamic> get _contextRef => {
+    'type': 'playlist',
+    'id': _playlist!.id.toString(),
+    'order': 'as_listed',
+  };
+
   void _playAllTracks() {
     if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
     final tracks = _playlist!.tracks!;
@@ -73,21 +79,19 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
       tracks,
       isNewQueue: true,
       origin: 'context',
+      contextRef: _contextRef,
     );
   }
 
   void _shufflePlayAllTracks() {
     if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
     final tracks = _playlist!.tracks!;
-    final playerState = ref.read(playerProvider);
-    if (!playerState.isShuffled) {
-      ref.read(playerProvider.notifier).toggleShuffle();
-    }
     ref.read(playerProvider.notifier).playTrack(
       tracks.first,
       tracks,
       isNewQueue: true,
       origin: 'context',
+      contextRef: {..._contextRef, 'order': 'shuffled'},
     );
   }
 
@@ -789,6 +793,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                             child: TrackTile(
                               track: track,
                               queue: tracks,
+                              contextRef: _contextRef,
                               onRemoveFromPlaylist: () => _removeTrack(track.videoId),
                             ),
                           ),
@@ -811,6 +816,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                           key: ValueKey(track.videoId),
                           track: track,
                           queue: tracks,
+                          contextRef: _contextRef,
                           onRemoveFromPlaylist: () => _removeTrack(track.videoId),
                         );
                       }
@@ -830,6 +836,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                               key: ValueKey('track_tile_${track.videoId}'),
                               track: track,
                               queue: tracks,
+                              contextRef: _contextRef,
                               onRemoveFromPlaylist: () => _removeTrack(track.videoId),
                             ),
                           ),

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:zephyr_core/app/zephyr_app.dart';
 import 'package:zephyr_core/utils/app_logger.dart';
+import 'package:zephyr_core/utils/app_platform.dart';
 import 'package:zephyr_core/utils/media_controls.dart';
 
 import 'mpris_service.dart';
@@ -47,6 +48,7 @@ void _disableGStreamerVideoSink() {
 }
 
 Future<void> main(List<String> args) async {
+  AppPlatform.formFactor = ZephyrFormFactor.desktop;
   _disableGStreamerVideoSink();
   WidgetsFlutterBinding.ensureInitialized();
   await AppLogger.instance.init();

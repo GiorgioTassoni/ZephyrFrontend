@@ -27,6 +27,7 @@ class TrackTile extends ConsumerStatefulWidget {
   final bool showDownloadIndicator;
   final EdgeInsetsGeometry? contentPadding;
   final String? origin;
+  final Map<String, dynamic>? contextRef;
 
   const TrackTile({
     super.key,
@@ -38,6 +39,7 @@ class TrackTile extends ConsumerStatefulWidget {
     this.showDownloadIndicator = true,
     this.contentPadding,
     this.origin,
+    this.contextRef,
   });
 
   @override
@@ -426,9 +428,16 @@ class _TrackTileState extends ConsumerState<TrackTile> {
     final playerNotifier = ref.read(playerProvider.notifier);
     final playerState = ref.read(playerProvider);
 
+    final activeContext = playerState.contextRef;
+    final requestedContext = widget.contextRef;
     final bool isSameContext = widget.origin != 'search' &&
-        playerState.queue.isNotEmpty &&
-        playerState.queue.any((t) => t.videoId == widget.track.videoId);
+        ((activeContext != null && requestedContext != null &&
+                activeContext['type']?.toString() ==
+                    requestedContext['type']?.toString() &&
+                activeContext['id']?.toString() ==
+                    requestedContext['id']?.toString()) ||
+            (playerState.queue.isNotEmpty &&
+                playerState.queue.any((t) => t.videoId == widget.track.videoId)));
 
     try {
       await playerNotifier.playTrack(
@@ -436,6 +445,7 @@ class _TrackTileState extends ConsumerState<TrackTile> {
         widget.queue,
         isNewQueue: !isSameContext,
         origin: widget.origin ?? 'context',
+        contextRef: widget.contextRef,
       );
     } on ResolutionRequiredException catch (_) {
       // Handled globally by PlayerNotifier._triggerResolutionModal

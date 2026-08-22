@@ -10,6 +10,7 @@ import '../providers/navigation_provider.dart';
 import '../providers/player_provider.dart';
 import '../providers/search_provider.dart';
 import '../theme/colors.dart';
+import '../utils/app_platform.dart';
 import '../widgets/cover_image.dart';
 import '../widgets/seek_bar.dart';
 import '../widgets/artist_links.dart';
@@ -418,8 +419,10 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                     ),
                   ),
 
-                  // Horizontal divider above player (hidden when in fullscreen lyrics)
-                  if (navState.currentScreen.type != ScreenType.lyrics)
+                  // Horizontal divider above player (hidden only on the
+                  // mobile fullscreen lyrics view; desktop keeps it)
+                  if (!(navState.currentScreen.type == ScreenType.lyrics &&
+                      AppPlatform.isMobile))
                     Container(height: 1, color: ZephyrColors.bgLight),
 
                   // Bottom Player Bar
@@ -2195,7 +2198,9 @@ class _PlayerBarWidget extends ConsumerWidget {
     final isLyricsScreen = ref.watch(
       navigationProvider.select((s) => s.currentScreen.type == ScreenType.lyrics),
     );
-    if (isLyricsScreen) {
+    // Mobile goes truly fullscreen on the lyrics screen; desktop keeps the
+    // player bar (behavioral subdivision via AppPlatform, set by each shell).
+    if (isLyricsScreen && AppPlatform.isMobile) {
       return const SizedBox.shrink();
     }
     final playerState = ref.watch(playerProvider);

@@ -1,0 +1,121 @@
+name: Build & Deploy Windows
+
+# Builds the Zephyr desktop app for Windows and deploys it as a GitHub Release:
+#   - portable ZIP of the Flutter release bundle
+#   - standalone installer EXE (Inno Setup)
+# The installer exe targets "frontend.exe" (BINARY_NAME in windows/CMakeLists.txt).
+
+on:
+  workflow_dispatch: # Manual trigger from the Actions tab
+    inputs:
+      release_channel:
+        description: 'Release channel baked into the build (RELEASE_CHANNEL dart-define)'
+        required: true
+        default: 'Preview'
+        type: string
+      tag:
+        description: 'Git tag to publish. Use "auto" to create v<version> from pubspec.yaml.'
+        required: false
+        default: 'auto'
+        type: string
+  push:
+    tags:
+      - 'v*' # Auto-release when a version tag like v1.1.0 is pushed
+
+permissions:
+  contents: write # needed to create the GitHub Release and its tag
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from pubspec
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path 'apps/zephyr_desktop/pubspec.yaml' -Pattern '^version:\s*([^\s]+)').Matches[0].Groups[1].Value
+          $parts = $v -split '\+'
+          Add-Content -Path $env:GITHUB_ENV -Value "ZEPHYR_VERSION=$($parts[0])"
+          if ($parts.Count -gt 1) { Add-Content -Path $env:GITHUB_ENV -Value "ZEPHYR_BUILD=$($parts[1])" }
+          Add-Content -Path $env:GITHUB_ENV -Value "ZEPHYR_CHANNEL=${{ inputs.release_channel || 'Preview' }}"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Windows desktop toolchain
+        shell: pwsh
+        run: flutter config --enable-windows-desktop
+
+      - name: Install dependencies (zephyr_core)
+        working-directory: packages/zephyr_core
+        run: flutter pub get
+
+      - name: Install dependencies (desktop app)
+        working-directory: apps/zephyr_desktop
+        run: flutter pub get
+
+      - name: Build Windows release
+        working-directory: apps/zephyr_desktop
+        shell: pwsh
+        run: flutter build windows --release --dart-define=RELEASE_CHANNEL=$env:ZEPHYR_CHANNEL
+
+      - name: Package portable ZIP
+        working-directory: apps/zephyr_desktop
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'build/artifacts' | Out-Null
+          Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath "build/artifacts/Zephyr-Windows-$($env:ZEPHYR_CHANNEL)-$($env:ZEPHYR_VERSION).zip" -Force
+
+      - name: Build installer (Inno Setup)
+        working-directory: apps/zephyr_desktop
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          New-Item -ItemType Directory -Force -Path 'build/installer' | Out-Null
+          & $iscc 'windows/installer/ZephyrInstaller.iss' "/O$(Resolve-Path 'build/installer')" "/DMyAppVersion=$($env:ZEPHYR_VERSION)" "/DMyAppChannel=$($env:ZEPHYR_CHANNEL)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload artifacts (build overview)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zephyr-Windows-${{ env.ZEPHYR_VERSION }}-${{ env.ZEPHYR_CHANNEL }}
+          if-no-files-found: error
+          path: |
+            apps/zephyr_desktop/build/artifacts/*.zip
+            apps/zephyr_desktop/build/installer/*.exe
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          $sha  = $env:GITHUB_SHA
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tag = $env:GITHUB_REF_NAME
+          } else {
+            $tag = "${{ inputs.tag || 'auto' }}"
+            if ([string]::IsNullOrWhiteSpace($tag) -or $tag -eq 'auto') { $tag = "v$($env:ZEPHYR_VERSION)" }
+          }
+          $title = "Zephyr v$($env:ZEPHYR_VERSION) ($($env:ZEPHYR_CHANNEL))"
+          $files = @(Get-ChildItem 'apps/zephyr_desktop/build/artifacts/*.zip' -ErrorAction SilentlyContinue).FullName
+          $files += @(Get-ChildItem 'apps/zephyr_desktop/build/installer/*.exe' -ErrorAction SilentlyContinue).FullName
+
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists - uploading artifacts"
+            gh release upload $tag $files --repo $repo --clobber
+          } else {
+            Write-Host "Creating release $tag"
+            gh release create $tag $files --repo $repo --target $sha --title $title --generate-notes
+          }

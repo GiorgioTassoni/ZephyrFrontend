@@ -13,24 +13,21 @@ BIN_DIR="${HOME}/.local/bin"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
 DESKTOP_FILE="${APPLICATIONS_DIR}/${APP_ID}.desktop"
 LAUNCHER="${BIN_DIR}/zephyr"
-APP_VERSION="unknown"
-if [[ -f "${APP_ROOT}/pubspec.yaml" ]]; then
-  APP_VERSION="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' "${APP_ROOT}/pubspec.yaml" | head -n 1 || true)"
-  APP_VERSION="${APP_VERSION:-unknown}"
-fi
-DISPLAY_VERSION="v${APP_VERSION} ${RELEASE_CHANNEL}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./install.sh [bundle-directory]
-  ./install.sh --uninstall
+  ./installSameFolder.sh
+  ./installSameFolder.sh --uninstall
 
-The installer uses apps/zephyr_desktop/build/linux/x64/release/bundle by
-default. Set ZEPHYR_INSTALL_DIR to choose a different user-local
-installation directory. If the bundle is missing and Flutter is available,
-the script builds it with RELEASE_CHANNEL (default: Preview) before
-installing it.
+The script expects either:
+  1. A bundle/ directory beside this script,
+  2. frontend, data/, and lib/ beside this script, or
+  3. A freshly built Flutter bundle at
+     apps/zephyr_desktop/build/linux/x64/release/bundle.
+
+The bundle is installed to ~/.local/opt/zephyr. Set ZEPHYR_INSTALL_DIR to
+choose a different user-local installation directory.
 EOF
 }
 
@@ -58,34 +55,42 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   exit 0
 fi
 
-if [[ "${#}" -gt 1 ]]; then
+if [[ "${#}" -ne 0 ]]; then
   usage >&2
   exit 2
 fi
 
-BUNDLE_DIR="${1:-${DEFAULT_BUNDLE}}"
-BINARY_PATH="${BUNDLE_DIR}/${BINARY_NAME}"
+if [[ -x "${SCRIPT_DIR}/bundle/${BINARY_NAME}" ]]; then
+  BUNDLE_DIR="${SCRIPT_DIR}/bundle"
+elif [[ -x "${SCRIPT_DIR}/${BINARY_NAME}" ]]; then
+  BUNDLE_DIR="${SCRIPT_DIR}"
+elif [[ -x "${DEFAULT_BUNDLE}/${BINARY_NAME}" ]]; then
+  BUNDLE_DIR="${DEFAULT_BUNDLE}"
+else
+  echo "Could not find a Linux bundle beside ${BASH_SOURCE[0]}." >&2
+  echo "Expected bundle/frontend or frontend beside the installer, or a built" >&2
+  echo "bundle at ${DEFAULT_BUNDLE}." >&2
+  exit 1
+fi
 
-if [[ ! -x "${BINARY_PATH}" ]]; then
-  if command -v flutter >/dev/null 2>&1 && [[ -f "${APP_ROOT}/pubspec.yaml" ]]; then
-    echo "Linux release bundle not found; building ${APP_NAME} (${RELEASE_CHANNEL})..."
-    (
-      cd -- "${APP_ROOT}"
-      flutter build linux --release --dart-define="RELEASE_CHANNEL=${RELEASE_CHANNEL}"
-    )
-    BUNDLE_DIR="${DEFAULT_BUNDLE}"
-    BINARY_PATH="${BUNDLE_DIR}/${BINARY_NAME}"
-  else
-    echo "Linux release bundle not found: ${BUNDLE_DIR}" >&2
-    echo "Build it with: flutter build linux --release --dart-define=RELEASE_CHANNEL=Preview" >&2
-    exit 1
-  fi
+BINARY_PATH="${BUNDLE_DIR}/${BINARY_NAME}"
+if [[ ! -d "${BUNDLE_DIR}/data" || ! -d "${BUNDLE_DIR}/lib" ]]; then
+  echo "Incomplete Flutter Linux bundle: ${BUNDLE_DIR}" >&2
+  echo "The bundle must contain frontend, data/, and lib/." >&2
+  exit 1
 fi
 
 if pgrep -x "${BINARY_NAME}" >/dev/null 2>&1; then
   echo "${APP_NAME} is running. Close it before installing an update." >&2
   exit 1
 fi
+
+APP_VERSION="unknown"
+if [[ -f "${APP_ROOT}/pubspec.yaml" ]]; then
+  APP_VERSION="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' "${APP_ROOT}/pubspec.yaml" | head -n 1 || true)"
+  APP_VERSION="${APP_VERSION:-unknown}"
+fi
+DISPLAY_VERSION="v${APP_VERSION} ${RELEASE_CHANNEL}"
 
 mkdir -p -- "$(dirname -- "${INSTALL_DIR}")" "${BIN_DIR}" "${APPLICATIONS_DIR}"
 TEMP_DIR="$(mktemp -d "$(dirname -- "${INSTALL_DIR}")/.zephyr-install.XXXXXX")"

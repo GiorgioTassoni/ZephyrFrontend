@@ -1,0 +1,44 @@
+name: CI - Analyze & Test
+
+# The "is the frontend ready to deploy?" gate. Runs on every PR and on
+# pushes to main: static analysis + unit tests for the shared core package.
+# A green run means the release workflows can safely build & deploy.
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies (zephyr_core)
+        working-directory: packages/zephyr_core
+        run: flutter pub get
+
+      - name: Static analysis
+        working-directory: packages/zephyr_core
+        # Fail on analyzer errors/warnings (the repo is already clean at 0/0;
+        # info-level style lints are non-blocking).
+        run: flutter analyze
+
+      - name: Run tests
+        working-directory: packages/zephyr_core
+        run: flutter test

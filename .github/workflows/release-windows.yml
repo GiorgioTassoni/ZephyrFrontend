@@ -88,24 +88,36 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          # Chocolatey is NOT preinstalled on GitHub's windows-latest runner, so
-          # download the official Inno Setup installer and install it silently.
+          # Chocolatey is NOT preinstalled on GitHub's windows-latest runner.
+          # The jrsoftware.org/download.php endpoint is a redirect that can
+          # return a corrupted download on the runner, so pull the official
+          # installer straight from the project's GitHub releases (bit-exact)
+          # and verify it is a real PE executable before running it.
           $installer = "$($env:TEMP)\innosetup-setup.exe"
-          $url = 'https://jrsoftware.org/download.php/is.exe'
-          curl -L --fail --silent --show-error -o $installer $url
-          if (!(Test-Path $installer) -or (Get-Item $installer).Size -eq 0) {
-            throw 'Inno Setup download failed'
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe'
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            curl -L --fail --silent --show-error -o $installer $url
+            # PE executables start with the MZ DOS header; reject anything else.
+            if (Test-Path $installer) {
+              $fs = New-Object System.IO.FileStream($installer, 'r')
+              $b = [Byte[]]::new(2)
+              $fs.Read($b, 0, 2)
+              $fs.Close()
+              if ($b[0] -eq 0x4D -and $b[1] -eq 0x5A) {
+                Write-Host "Got valid Inno Setup installer (MZ): $((Get-Item $installer).Size) bytes"
+                break
+              }
+            }
+            Write-Host "Attempt $attempt failed (bad/corrupt download); retrying..."
+            if ($attempt -eq 3) { throw 'Inno Setup download failed after 3 attempts' }
           }
           # Inno Setup's own setup is built with Inno Setup, so standard silent
           # switches apply.
           & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
-          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-          if (!(Test-Path $iscc)) {
-            $alt = 'C:\Program Files\Inno Setup 6\ISCC.exe'
-            if (Test-Path $alt) { $iscc = $alt }
-            else { throw "ISCC.exe not found after Inno Setup install" }
+          if (!(Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe') -and
+              !(Test-Path 'C:\Program Files\Inno Setup 6\ISCC.exe')) {
+            throw 'ISCC.exe not found after Inno Setup install'
           }
-          Write-Host "ISCC ready: $iscc"
 
       - name: Build installer (Inno Setup)
         working-directory: apps/zephyr_desktop

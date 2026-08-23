@@ -1,9 +1,8 @@
 name: Build & Deploy Windows
 
 # Builds the Zephyr desktop app for Windows and deploys it as a GitHub Release:
-#   - portable ZIP of the Flutter release bundle
-#   - standalone installer EXE (Inno Setup)
-# The installer exe targets "frontend.exe" (BINARY_NAME in windows/CMakeLists.txt).
+#   - portable ZIP of the Flutter release bundle (extract & run, no installer)
+# The archive contains "frontend.exe" (BINARY_NAME in windows/CMakeLists.txt).
 
 on:
   workflow_dispatch: # Manual trigger from the Actions tab
@@ -85,54 +84,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path 'build/artifacts' | Out-Null
           Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath "build/artifacts/Zephyr-Windows-$($env:ZEPHYR_CHANNEL)-$($env:ZEPHYR_VERSION).zip" -Force
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: |
-          # Chocolatey is NOT preinstalled on GitHub's windows-latest runner.
-          # The jrsoftware.org/download.php endpoint is a redirect that can
-          # return a corrupted download on the runner, so pull the official
-          # installer straight from the project's GitHub releases (bit-exact)
-          # and verify it is a real PE executable before running it.
-          $installer = "$($env:TEMP)\innosetup-setup.exe"
-          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe'
-          for ($attempt = 1; $attempt -le 3; $attempt++) {
-            curl -L --fail --silent --show-error -o $installer $url
-            # PE executables start with the MZ DOS header; reject anything else.
-            if (Test-Path $installer) {
-              $fs = New-Object System.IO.FileStream($installer, 'r')
-              $b = [Byte[]]::new(2)
-              $fs.Read($b, 0, 2)
-              $fs.Close()
-              if ($b[0] -eq 0x4D -and $b[1] -eq 0x5A) {
-                Write-Host "Got valid Inno Setup installer (MZ): $((Get-Item $installer).Size) bytes"
-                break
-              }
-            }
-            Write-Host "Attempt $attempt failed (bad/corrupt download); retrying..."
-            if ($attempt -eq 3) { throw 'Inno Setup download failed after 3 attempts' }
-          }
-          # Inno Setup's own setup is built with Inno Setup, so standard silent
-          # switches apply.
-          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
-          if (!(Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe') -and
-              !(Test-Path 'C:\Program Files\Inno Setup 6\ISCC.exe')) {
-            throw 'ISCC.exe not found after Inno Setup install'
-          }
-
-      - name: Build installer (Inno Setup)
-        working-directory: apps/zephyr_desktop
-        shell: pwsh
-        run: |
-          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-          if (!(Test-Path $iscc)) {
-            $alt = 'C:\Program Files\Inno Setup 6\ISCC.exe'
-            if (Test-Path $alt) { $iscc = $alt }
-            else { throw "ISCC.exe not found - install Inno Setup first" }
-          }
-          New-Item -ItemType Directory -Force -Path 'build/installer' | Out-Null
-          & $iscc 'windows/installer/ZephyrInstaller.iss' "/O$(Resolve-Path 'build/installer')" "/DMyAppVersion=$($env:ZEPHYR_VERSION)" "/DMyAppChannel=$($env:ZEPHYR_CHANNEL)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
       - name: Upload artifacts (build overview)
         uses: actions/upload-artifact@v4
         with:
@@ -140,7 +91,6 @@ jobs:
           if-no-files-found: error
           path: |
             apps/zephyr_desktop/build/artifacts/*.zip
-            apps/zephyr_desktop/build/installer/*.exe
 
       - name: Publish GitHub Release
         shell: pwsh
@@ -157,7 +107,6 @@ jobs:
           }
           $title = "Zephyr v$($env:ZEPHYR_VERSION) ($($env:ZEPHYR_CHANNEL))"
           $files = @(Get-ChildItem 'apps/zephyr_desktop/build/artifacts/*.zip' -ErrorAction SilentlyContinue).FullName
-          $files += @(Get-ChildItem 'apps/zephyr_desktop/build/installer/*.exe' -ErrorAction SilentlyContinue).FullName
 
           gh release view $tag --repo $repo *> $null
           if ($LASTEXITCODE -eq 0) {

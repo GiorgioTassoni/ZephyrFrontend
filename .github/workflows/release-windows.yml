@@ -19,6 +19,8 @@ on:
         default: 'auto'
         type: string
   push:
+    branches:
+      - 'main' # Auto-release whenever main is updated
     tags:
       - 'v*' # Auto-release when a version tag like v1.1.0 is pushed
 
@@ -83,12 +85,38 @@ jobs:
           New-Item -ItemType Directory -Force -Path 'build/artifacts' | Out-Null
           Compress-Archive -Path 'build/windows/x64/runner/Release/*' -DestinationPath "build/artifacts/Zephyr-Windows-$($env:ZEPHYR_CHANNEL)-$($env:ZEPHYR_VERSION).zip" -Force
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          # Chocolatey is NOT preinstalled on GitHub's windows-latest runner, so
+          # download the official Inno Setup installer and install it silently.
+          $installer = "$($env:TEMP)\innosetup-setup.exe"
+          $url = 'https://jrsoftware.org/download.php/is.exe'
+          curl -L --fail --silent --show-error -o $installer $url
+          if (!(Test-Path $installer) -or (Get-Item $installer).Size -eq 0) {
+            throw 'Inno Setup download failed'
+          }
+          # Inno Setup's own setup is built with Inno Setup, so standard silent
+          # switches apply.
+          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) {
+            $alt = 'C:\Program Files\Inno Setup 6\ISCC.exe'
+            if (Test-Path $alt) { $iscc = $alt }
+            else { throw "ISCC.exe not found after Inno Setup install" }
+          }
+          Write-Host "ISCC ready: $iscc"
+
       - name: Build installer (Inno Setup)
         working-directory: apps/zephyr_desktop
         shell: pwsh
         run: |
-          choco install innosetup --yes --no-progress
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path $iscc)) {
+            $alt = 'C:\Program Files\Inno Setup 6\ISCC.exe'
+            if (Test-Path $alt) { $iscc = $alt }
+            else { throw "ISCC.exe not found - install Inno Setup first" }
+          }
           New-Item -ItemType Directory -Force -Path 'build/installer' | Out-Null
           & $iscc 'windows/installer/ZephyrInstaller.iss' "/O$(Resolve-Path 'build/installer')" "/DMyAppVersion=$($env:ZEPHYR_VERSION)" "/DMyAppChannel=$($env:ZEPHYR_CHANNEL)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

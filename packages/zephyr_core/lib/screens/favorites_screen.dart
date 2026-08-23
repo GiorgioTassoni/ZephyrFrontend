@@ -226,8 +226,15 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     final favoritesLoading = ref.watch(libraryProvider.select((s) => s.favoritesLoading));
     final username = ref.watch(authProvider.select((s) => s.username ?? 'User'));
     final navNotifier = ref.read(navigationProvider.notifier);
-    final isShuffled = ref.watch(playerProvider.select((s) => s.isShuffled));
     final playerNotifier = ref.read(playerProvider.notifier);
+    // Favorites shuffle is a TOGGLE like the playlist/album one: highlight and
+    // turn OFF when favorites is the active shuffled context, otherwise start
+    // favorites in shuffled order.
+    final playerActiveShuffle = ref.watch(playerProvider.select(
+      (s) =>
+          '${s.contextRef?['type']?.toString()};${s.contextRef?['id']?.toString()};${s.isShuffled}',
+    ));
+    final bool thisContextShuffled = playerActiveShuffle == 'favorites;null;true';
 
     final processedFavorites = _getProcessedFavorites(rawFavorites);
 
@@ -429,26 +436,28 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                       ),
                       const SizedBox(width: 12),
 
-                      // Shuffle Button
+                      // Shuffle Button (toggle: off when this context is the
+                      // active shuffled one, otherwise start shuffled)
                       IconButton(
                         icon: Icon(
                           Icons.shuffle,
-                          color: isShuffled ? ZephyrColors.primary : ZephyrColors.textDim,
+                          color: thisContextShuffled ? ZephyrColors.primary : ZephyrColors.textDim,
                           size: 26,
                         ),
-                        tooltip: 'Shuffle Play',
+                        tooltip: thisContextShuffled ? 'Turn off shuffle' : 'Shuffle play',
                         onPressed: processedFavorites.isNotEmpty
                             ? () {
-                                if (!isShuffled) {
-                                  playerNotifier.toggleShuffle();
+                                if (thisContextShuffled) {
+                                  unawaited(playerNotifier.toggleShuffle());
+                                } else {
+                                  unawaited(playerNotifier.playTrack(
+                                    processedFavorites.first,
+                                    processedFavorites,
+                                    isNewQueue: true,
+                                    origin: 'context',
+                                    contextRef: {..._contextRef, 'order': 'shuffled'},
+                                  ));
                                 }
-                                playerNotifier.playTrack(
-                                  processedFavorites.first,
-                                  processedFavorites,
-                                  isNewQueue: true,
-                                  origin: 'context',
-                                  contextRef: {..._contextRef, 'order': 'shuffled'},
-                                );
                               }
                             : null,
                       ),

@@ -8,6 +8,7 @@ import 'package:dio/dio.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/zephyr_api.dart';
+import '../providers/queue_policy.dart';
 import '../models/models.dart';
 import 'package:flutter/material.dart';
 import '../utils/media_controls.dart';
@@ -105,8 +106,13 @@ class ZephyrPlayerState {
   final Map<String, dynamic>? contextRef;
   final int? contextTotal;
   final int? contextCursor;
+  // Authoritative "real remaining" from the backend (queue_count = len(active
+  // order) - cursor). Identical to contextTotal in steady state but derived
+  // from the active order; preferred for 'Next in queue (N)'.
+  final int? queueCount;
   final String? contextOrderActive;
   final String? contextStatus;
+  final String? contextRequestId;
   final bool isShuffled;
   final List<Map<String, dynamic>> connectedDevices;
   final String? activeDeviceId;
@@ -141,8 +147,10 @@ class ZephyrPlayerState {
     this.contextRef,
     this.contextTotal,
     this.contextCursor,
+    this.queueCount,
     this.contextOrderActive,
     this.contextStatus,
+    this.contextRequestId,
     this.isShuffled = false,
     this.connectedDevices = const [],
     this.activeDeviceId,
@@ -206,8 +214,10 @@ class ZephyrPlayerState {
     bool clearContextRef = false,
     int? contextTotal,
     int? contextCursor,
+    int? queueCount,
     String? contextOrderActive,
     String? contextStatus,
+    String? contextRequestId,
     bool clearContextMetadata = false,
     bool? isShuffled,
     String? errorMessage,
@@ -255,12 +265,16 @@ class ZephyrPlayerState {
       contextCursor: clearContextMetadata
           ? null
           : (contextCursor ?? this.contextCursor),
+      queueCount: clearContextMetadata ? null : (queueCount ?? this.queueCount),
       contextOrderActive: clearContextMetadata
           ? null
           : (contextOrderActive ?? this.contextOrderActive),
       contextStatus: clearContextMetadata
           ? null
           : (contextStatus ?? this.contextStatus),
+      contextRequestId: clearContextMetadata
+          ? null
+          : (contextRequestId ?? this.contextRequestId),
       isShuffled: isShuffled ?? this.isShuffled,
       errorMessage: errorMessage ?? this.errorMessage,
       isLoading: isLoading ?? this.isLoading,
@@ -437,6 +451,17 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   String? _trackTransitionAction;
   DateTime? _lastAppliedServerUpdateAt;
   String? _nextWaitingForRadioTrackId;
+  // Same one-shot retry for async CONTEXT resolution (Exchange 60): /next
+  // returned 202 while context_status == 'pending'; retry once when a matching
+  // ready snapshot has installed a usable context queue window.
+  String? _nextWaitingForContextTrackId;
+
+  /// Persisted client preference for shuffle order. Context ordering itself
+  /// is owned by the backend, but we remember the user's last shuffle choice
+  /// here so a new context and an app restart keep it (preference is applied
+  /// to the `order` stamped on every new contextRef, then the server resolves
+  /// the actual window).
+  bool _shufflePref = false;
 
   Future<void> _enqueueServerSnapshot(
     Map<String, dynamic> snapshot, {
@@ -526,6 +551,32 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
             'trackId': waitingTrackId,
             'queueLength': state.queue.length,
             'radioRequestId': state.radioRequestId,
+          },
+        );
+        unawaited(playNext());
+      }
+
+      // Context equivalent: /next returned 202 while the context was still
+      // resolving. Retry once when the ready snapshot has installed a usable
+      // queue window. Same request-id stale guard as radio.
+      final waitingContextTrackId = _nextWaitingForContextTrackId;
+      final contextReadyRequestId = snapshot['context_request_id']?.toString();
+      final contextRequestMatches =
+          contextReadyRequestId == null ||
+          state.contextRequestId == null ||
+          contextReadyRequestId == state.contextRequestId;
+      if (waitingContextTrackId != null &&
+          state.contextStatus == 'ready' &&
+          state.queue.length > 1 &&
+          contextRequestMatches &&
+          _isSameTrack(state.currentTrack?.videoId, waitingContextTrackId)) {
+        _nextWaitingForContextTrackId = null;
+        AppLogger.instance.logQueue(
+          'context_ready_retrying_next',
+          data: {
+            'trackId': waitingContextTrackId,
+            'queueLength': state.queue.length,
+            'contextRequestId': state.contextRequestId,
           },
         );
         unawaited(playNext());
@@ -1015,6 +1066,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         state.position.inMilliseconds;
     final String? curTrackId = snapshot['current_track_id']?.toString();
     final previousPositionUpdatedAt = state.positionUpdatedAt;
+    // Capture the context resolution id BEFORE the snapshot copyWith below
+    // overwrites state.contextRequestId, so a late snapshot from an older
+    // resolution can be detected as stale and must not clobber a newer one.
+    final String? previousContextRequestId = state.contextRequestId;
 
     // Radio generation is asynchronous: the seed response is `pending`, and
     // a later SSE/state snapshot changes it to `ready` or `failed`.
@@ -1026,6 +1081,18 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         ? Map<String, dynamic>.from(rawContextRef)
         : null;
     final serverContextOrder = snapshot['context_order_active']?.toString();
+    final String? rawContextRequestId =
+        snapshot['context_request_id']?.toString();
+    // F1: a snapshot whose context_request_id differs from the resolution we
+    // are currently tracking is a STALE async context result (Exchange 60).
+    // It must neither clobber the context metadata of the newer resolution
+    // (ref/status/request-id/order/cursor/total) nor its queue window. Compute
+    // the staleness BEFORE any copyWith mutates state.contextRequestId, so the
+    // next legitimate snapshot is not misclassified as stale by this one.
+    final bool isStaleContextResolution = QueuePolicy.isStaleContextResolution(
+      rawContextRequestId,
+      previousContextRequestId,
+    );
     final radioError = snapshot['radio_error'];
     final radioErrorMap = radioError is Map
         ? Map<String, dynamic>.from(radioError)
@@ -1052,20 +1119,39 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         radioErrorCode: radioErrorMap?['code']?.toString(),
         radioErrorMessage: radioErrorMap?['message']?.toString(),
         clearRadioError: hasRadioStatus && rawRadioStatus != 'failed',
-        contextRef: serverContextRef,
-        clearContextRef:
-            rawQueueMode == 'radio' ||
-            (rawQueueMode == 'context' && serverContextRef == null),
-        clearContextMetadata:
-            rawQueueMode == 'radio' ||
-            (rawQueueMode == 'context' && serverContextRef == null),
-        contextTotal: (snapshot['context_total'] as num?)?.toInt(),
-        contextCursor: (snapshot['context_cursor'] as num?)?.toInt(),
-        contextOrderActive: snapshot['context_order_active']?.toString(),
-        contextStatus: snapshot['context_status']?.toString(),
-        isShuffled: serverContextOrder == 'shuffled'
-            ? true
-            : (serverContextOrder == 'linear' ? false : null),
+        // F1: when this snapshot is a stale context resolution, keep the
+        // newer context's metadata untouched (copyWith null => preserve)
+        // and suppress clear flags that would wipe it.
+        contextRef: isStaleContextResolution ? null : serverContextRef,
+        clearContextRef: isStaleContextResolution
+            ? false
+            : (rawQueueMode == 'radio' ||
+                (rawQueueMode == 'context' && serverContextRef == null)),
+        clearContextMetadata: isStaleContextResolution
+            ? false
+            : (rawQueueMode == 'radio' ||
+                (rawQueueMode == 'context' && serverContextRef == null)),
+        contextTotal: isStaleContextResolution
+            ? null
+            : (snapshot['context_total'] as num?)?.toInt(),
+        contextCursor: isStaleContextResolution
+            ? null
+            : (snapshot['context_cursor'] as num?)?.toInt(),
+        queueCount: isStaleContextResolution
+            ? null
+            : (snapshot['queue_count'] as num?)?.toInt(),
+        contextOrderActive: isStaleContextResolution
+            ? null
+            : snapshot['context_order_active']?.toString(),
+        contextStatus: isStaleContextResolution
+            ? null
+            : snapshot['context_status']?.toString(),
+        contextRequestId: isStaleContextResolution ? null : rawContextRequestId,
+        isShuffled: isStaleContextResolution
+            ? null
+            : (serverContextOrder == 'shuffled'
+                  ? true
+                  : (serverContextOrder == 'linear' ? false : null)),
       );
       AppLogger.instance.logQueue(
         'radio_status_updated',
@@ -1120,6 +1206,36 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           .whereType<Track>()
           .toList();
     }
+
+    // Diagnostic: per-snapshot context analysis. Users share AppLogger logs
+    // to debug "queue did not switch when jumping playlists" (Android owner
+    // vs desktop). Captures role, context ids, staleness and queue windows so
+    // a stale/pending snapshot reverting the optimistic new context is visible.
+    AppLogger.instance.logQueue(
+      'snapshot_context_analysis',
+      data: {
+        'eventType': snapshot['_event_type']?.toString() ?? 'http',
+        'isStartup': isStartup,
+        'deviceRole': isPlayer ? 'owner' : 'mirror',
+        'deviceIdMatches': activeId == state.myDeviceId,
+        'activeDeviceId': activeId,
+        'myDeviceId': state.myDeviceId,
+        'rawQueueMode': rawQueueMode,
+        'serverContextRef': serverContextRef?.toString(),
+        'serverContextOrder': serverContextOrder,
+        'rawContextRequestId': rawContextRequestId,
+        'previousContextRequestId': previousContextRequestId,
+        'isStaleContextResolution': isStaleContextResolution,
+        'contextStatus': snapshot['context_status']?.toString(),
+        'contextCursor': snapshot['context_cursor'],
+        'contextTotal': snapshot['context_total'],
+        'queueCount': snapshot['queue_count'],
+        'snapshotQueueLength': serverQueueTracks?.length,
+        'localQueueLength': state.queue.length,
+        'currentTrackId': state.currentTrack?.videoId,
+        'snapshotUpdatedAt': snapshot['updated_at'],
+      },
+    );
 
     // 1. Initial app launch: hydrate track metadata in strictly PAUSED state without starting playback
     if (isStartup) {
@@ -1244,7 +1360,12 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       }
 
       List<Track> queueToUse = state.queue;
-      if (serverQueueTracks != null) {
+      // F1-remote: a stale async context snapshot must not clobber the
+      // optimistic queue this controller device installed for the new
+      // context. Guard the mirror path the same way the owner path's
+      // shouldApplyServerQueue does, so an intermediate/pending snapshot
+      // (old context window) cannot revert the newly requested queue.
+      if (serverQueueTracks != null && !isStaleContextResolution) {
         if (currentTrack != null &&
             !serverQueueTracks.any(
               (t) => _isSameTrack(t.videoId, currentTrack?.videoId),
@@ -1254,6 +1375,22 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           queueToUse = serverQueueTracks;
         }
       }
+
+      // Diagnostic: did this mirror (non-player) device accept the server's
+      // queue window for this snapshot, and was it blocked as stale context?
+      AppLogger.instance.logQueue(
+        'mirror_queue_decision',
+        data: {
+          'appliedServerQueue':
+              serverQueueTracks != null && !isStaleContextResolution,
+          'blockedByStaleContext': isStaleContextResolution,
+          'snapshotQueueLength': serverQueueTracks?.length,
+          'finalQueueLength': queueToUse.length,
+          'serverQueueMode': rawQueueMode,
+          'currentTrackId': currentTrack?.videoId,
+          'snapshotCurrentTrackId': curTrackId,
+        },
+      );
 
       // Reset duration when track changes so effectiveDuration uses Track.duration from the queue
       final bool remoteTrackChanged =
@@ -1317,11 +1454,35 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     // temporary current-only queue when the ready snapshot arrives.
     final isRadioSnapshot =
         rawQueueMode == 'radio' || state.queueMode == 'radio';
+    // F1: isStaleContextResolution is computed above, before any copyWith
+    // mutated state.contextRequestId. Its queue window must not overwrite a
+    // newer context either.
     final shouldApplyServerQueue =
         serverQueueTracks != null &&
-        ((isRadioSnapshot && !state.isShuffled) ||
-            (serverContextRef != null) ||
-            (!state.isShuffled && state.queue.length <= 1));
+        QueuePolicy.shouldApplyServerQueue(
+          isRadioSnapshot: isRadioSnapshot,
+          isStaleResolution: isStaleContextResolution,
+          hasServerContextRef: serverContextRef != null,
+          isShuffled: state.isShuffled,
+          localQueueLength: state.queue.length,
+        );
+    // Diagnostic: did the owner device accept/reject the server queue window
+    // for this snapshot and why (stale context, shuffled, window guards)?
+    AppLogger.instance.logQueue(
+      'owner_queue_decision',
+      data: {
+        'shouldApplyServerQueue': shouldApplyServerQueue,
+        'blockedByStaleContext': isStaleContextResolution,
+        'isRadioSnapshot': isRadioSnapshot,
+        'hasServerContextRef': serverContextRef != null,
+        'isShuffled': state.isShuffled,
+        'localQueueLength': state.queue.length,
+        'snapshotQueueLength': serverQueueTracks?.length,
+        'serverQueueMode': rawQueueMode,
+        'currentTrackId': state.currentTrack?.videoId,
+        'snapshotCurrentTrackId': curTrackId,
+      },
+    );
     if (shouldApplyServerQueue) {
       final curTrack = state.currentTrack;
       final fullQueue =
@@ -1668,6 +1829,17 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
               'radioGeneration': response['radio_generation'],
             },
           );
+        } else if (action == 'next' &&
+            httpStatus == 202 &&
+            response['context_status']?.toString() == 'pending') {
+          _nextWaitingForContextTrackId = state.currentTrack?.videoId;
+          AppLogger.instance.logQueue(
+            'next_waiting_for_context',
+            data: {
+              'trackId': _nextWaitingForContextTrackId,
+              'contextRequestId': response['context_request_id'],
+            },
+          );
         }
       }
     } catch (e) {
@@ -1831,6 +2003,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   ZephyrPlayerState build() {
     _initStreams();
     _loadSavedVolume();
+    _loadSavedShuffle();
     _initDeviceAndSse();
 
     // Desktop shell registers MPRIS via this seam; mobile shells keep the
@@ -1886,6 +2059,24 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         state = state.copyWith(volume: volume);
         await _applyVolumeToPlayers(volume);
       }
+    } catch (_) {}
+  }
+
+  Future<void> _loadSavedShuffle() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _shufflePref = prefs.getBool('player_shuffle') ?? false;
+    } catch (_) {
+      _shufflePref = false;
+    }
+  }
+
+  void _persistShufflePref(bool value) {
+    _shufflePref = value;
+    try {
+      SharedPreferences.getInstance().then((prefs) {
+        unawaited(prefs.setBool('player_shuffle', value));
+      });
     } catch (_) {}
   }
 
@@ -2041,6 +2232,36 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
   }) async {
     // A new explicit play invalidates any pending end-of-radio retry.
     _nextWaitingForRadioTrackId = null;
+    // F2: same invalidation for any pending async-context retry.
+    _nextWaitingForContextTrackId = null;
+
+    // Persisted shuffle preference (Exchange 60). Context ordering is owned by
+    // the backend, but we remember the user's last choice so a new context and
+    // an app restart keep it: stamp it onto the outgoing context ref. An
+    // explicit caller "Shuffle" (order: shuffled) always wins; otherwise the
+    // preferred order is used.
+    final bool explicitContextShuffled =
+        isNewQueue && contextRef?['order']?.toString() == 'shuffled';
+    // The caller explicitly opted into shuffle (the playlist "Shuffle" toggle
+    // fires playTrack with order:shuffled) — remember that choice. Plain
+    // context starts (Play All / taps) follow the persisted preference and do
+    // not rewrite it.
+    if (isNewQueue && contextRef != null && explicitContextShuffled) {
+      _persistShufflePref(true);
+    }
+    final bool requestedContextShuffled =
+        isNewQueue &&
+        (contextRef != null) &&
+        (explicitContextShuffled || _shufflePref);
+    // Stamp the effective order onto the ref so the server resolves the same
+    // order the client shows. Null context refs stay null (no-op).
+    Map<String, dynamic>? effectiveContextRef = contextRef;
+    if (isNewQueue && contextRef != null) {
+      effectiveContextRef = {
+        ...contextRef,
+        'order': requestedContextShuffled ? 'shuffled' : 'as_listed',
+      };
+    }
 
     AppLogger.instance.logPlayer(
       'play_track_requested',
@@ -2049,6 +2270,10 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
         'videoId': track.videoId,
         'artists': track.artists,
         'isPlayerDevice': state.isPlayerDevice,
+        // Route the tap explicitly: owner (local playback + server sync)
+        // vs mirror/controller (dispatch via sendPlayerCommand).
+        'deviceRole': state.isPlayerDevice ? 'owner' : 'mirror',
+        'queueMode': state.queueMode,
         'queueLength': playQueue.length,
         'isNewQueue': isNewQueue,
         'origin': origin,
@@ -2083,7 +2308,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           queueMode: shouldSeedRadio ? 'radio' : null,
           radioStatus: shouldSeedRadio ? 'pending' : null,
           clearRadioError: shouldSeedRadio,
-          contextRef: isNewQueue ? contextRef : null,
+          contextRef: isNewQueue ? effectiveContextRef : null,
           clearContextRef: shouldSeedRadio ||
               (isNewQueue && contextRef == null),
           clearContextMetadata: shouldSeedRadio ||
@@ -2100,7 +2325,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           action: 'play_track',
           currentTrackId: track.videoId,
           origin: origin == 'queue' || origin == 'context' ? origin : null,
-          contextRef: isNewQueue ? contextRef : null,
+          contextRef: isNewQueue ? effectiveContextRef : null,
           seedRadio: shouldSeedRadio ? true : null,
         );
         if (response != null && response.isNotEmpty) {
@@ -2144,8 +2369,6 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     List<Track> queueToSet;
     List<Track> originalQueueToSet;
     int targetIndex = 0;
-    final bool requestedContextShuffled =
-        isNewQueue && contextRef?['order']?.toString() == 'shuffled';
 
     final bool isFromCurrentQueue =
         origin == 'queue' ||
@@ -2223,7 +2446,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       position: initialPosition ?? Duration.zero,
       duration: initialDur,
       errorMessage: null,
-      contextRef: isNewQueue ? contextRef : null,
+      contextRef: isNewQueue ? effectiveContextRef : null,
       clearContextRef: origin == 'search' ||
           origin == 'radio' ||
           (isNewQueue && contextRef == null),
@@ -2690,7 +2913,7 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
                 queue: contextRef == null && !isContextPlayNow
                     ? queueMaps
                     : null,
-                contextRef: isNewQueue ? contextRef : null,
+                contextRef: isNewQueue ? effectiveContextRef : null,
                 userQueue: userQueueMaps,
                 isPlaying: true,
                 origin: origin == 'queue'
@@ -3484,6 +3707,18 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
           );
           // Do not pause or reset the current track. The ready SSE snapshot
           // will trigger next again once the radio queue exists.
+        } else if (httpStatus == 202 &&
+            nextRes['context_status']?.toString() == 'pending') {
+          _nextWaitingForContextTrackId = beforeTrackId;
+          AppLogger.instance.logQueue(
+            'next_waiting_for_context',
+            data: {
+              'trackId': beforeTrackId,
+              'contextRequestId': nextRes['context_request_id'],
+            },
+          );
+          // Same deferred retry: the ready context snapshot will trigger
+          // next again once the context queue window is installed.
         }
         return;
       }
@@ -3780,6 +4015,9 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     // or reshuffle locally; the server persists the selected order and emits
     // the authoritative snapshot to every device.
     if (state.contextRef != null) {
+      // Flip the persisted preference to match what we asked the server
+      // (the snapshot will confirm the authoritative order).
+      _persistShufflePref(!state.isShuffled);
       try {
         final response = await _api.togglePlayerContext();
         if (response.isNotEmpty) {
@@ -3847,6 +4085,8 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       );
     }
 
+    _persistShufflePref(state.isShuffled);
+
     _api
         .updatePlayerState(
           deviceId: state.isPlayerDevice ? state.myDeviceId : null,
@@ -3891,6 +4131,23 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     }
   }
 
+  /// 409 USER_QUEUE_STALE: the queue changed under this device (another
+  /// device edited it). Clear the mutation grace window and re-fetch the
+  /// authoritative state so this device resyncs and the user can retry.
+  Future<void> _handleUserStaleQueueConflict() async {
+    AppLogger.instance.logQueue(
+      'user_queue_stale_resync',
+      data: {'reason': 'USER_QUEUE_STALE'},
+    );
+    _lastUserQueueMutationAt = null;
+    try {
+      final s = await _api.getPlayerState(reason: 'user_queue_stale');
+      if (s.isNotEmpty) {
+        await _enqueueServerSnapshot(s, forceTrackTransition: false);
+      }
+    } catch (_) {}
+  }
+
   void reorderUserQueue(int oldIndex, int newIndex) {
     _lastUserQueueMutationAt = DateTime.now();
     if (oldIndex < newIndex) {
@@ -3904,15 +4161,17 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
       final item = list.removeAt(oldIndex);
       list.insert(newIndex, item);
       state = state.copyWith(userQueue: list);
-      // Persist the new order: without this, the next server snapshot
-      // (authoritative after the grace window) would visually revert the
-      // drag since reorder has no dedicated endpoint.
+      // Dedicated reorder endpoint (per-item). The backend is authoritative
+      // and echoes via snapshot; on 409 USER_QUEUE_STALE we resync instead of
+      // silently diverging.
       unawaited(
         _api
-            .updatePlayerState(
-              userQueue: _queueToMaps(list, limit: list.length),
-            )
-            .catchError((_) => <String, dynamic>{}),
+            .reorderUserQueueItem(item.videoId, oldIndex, newIndex)
+            .catchError((Object e) {
+              if (e is UserStaleQueueException) {
+                unawaited(_handleUserStaleQueueConflict());
+              }
+            }),
       );
     }
   }
@@ -3921,19 +4180,22 @@ class PlayerNotifier extends Notifier<ZephyrPlayerState> {
     _lastUserQueueMutationAt = DateTime.now();
     final list = List<Track>.from(state.userQueue);
     if (index >= 0 && index < list.length) {
-      list.removeAt(index);
+      final removed = list.removeAt(index);
       state = state.copyWith(userQueue: list);
       if (list.isEmpty) {
         unawaited(_api.clearUserQueue().catchError((_) {}));
       } else {
-        // Persist the shortened list so server snapshots do not resurrect
-        // the removed track (single-item removal has no dedicated endpoint).
+        // Dedicated per-item remove endpoint. On 409 USER_QUEUE_STALE this
+        // device's view is out of date — resync from the server and let the
+        // user retry instead of silently diverging.
         unawaited(
           _api
-              .updatePlayerState(
-                userQueue: _queueToMaps(list, limit: list.length),
-              )
-              .catchError((_) => <String, dynamic>{}),
+              .removeUserQueueItem(removed.videoId, index)
+              .catchError((Object e) {
+                if (e is UserStaleQueueException) {
+                  unawaited(_handleUserStaleQueueConflict());
+                }
+              }),
         );
       }
     }

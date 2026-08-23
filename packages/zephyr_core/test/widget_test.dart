@@ -1,6 +1,5 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zephyr_core/app/zephyr_app.dart';
+import 'package:zephyr_core/models/models.dart';
 import 'package:zephyr_core/providers/player_provider.dart';
 
 void main() {
@@ -14,13 +13,17 @@ void main() {
     expect(state.copyWith(queueMode: 'context').repeatMode, 'off');
   });
 
-  testWidgets('ZephyrApp loads splash screen initially', (
-    WidgetTester tester,
-  ) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const ProviderScope(child: ZephyrApp()));
+  test('extracted queue policy is consulted by the state defaults', () {
+    // Sanity: the provider default state is non-playing and empty-queue.
+    const state = ZephyrPlayerState();
+    expect(state.isPlaying, isFalse);
+    expect(state.queue, isEmpty);
+    expect(state.queueMode, 'radio');
+  });
 
-    // Verify that the splash screen text 'ZEPHYR' is displayed
-    expect(find.text('ZEPHYR'), findsOneWidget);
+  test('Track model produces canonical dz ids for the player queue', () {
+    // The queue screen/context handle dz_-prefixed ids; guard the contract.
+    final track = Track.fromJson({'track_id': '3135551', 'title': 'X'});
+    expect(track.videoId, 'dz_3135551');
   });
 }

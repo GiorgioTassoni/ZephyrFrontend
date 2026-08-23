@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../api/zephyr_api.dart';
@@ -134,21 +135,29 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     );
   }
 
-  void _shufflePlayAllTracks() {
-    if (_album == null || _album!.tracks == null || _album!.tracks!.isEmpty) return;
-    final enrichedTracks = _album!.tracks!.map((t) => t.copyWith(
-      coverUrl: t.coverUrl ?? _album!.coverUrl,
-      album: t.album ?? _album!.name,
-      albumId: t.albumId ?? _album!.id,
-    )).toList();
-
-    ref.read(playerProvider.notifier).playTrack(
-      enrichedTracks.first,
-      enrichedTracks,
-      isNewQueue: true,
-      origin: 'context',
-      contextRef: {..._contextRef, 'order': 'shuffled'},
-    );
+  // Album shuffle is a TOGGLE: if this album is the active shuffled context,
+  // pressing turns shuffle OFF; otherwise it starts the album shuffled.
+  void _toggleShufflePlay(List<Track> tracks, bool thisContextShuffled) {
+    if (_album == null || tracks.isEmpty) return;
+    final enriched = tracks
+        .map((t) => t.copyWith(
+          coverUrl: t.coverUrl ?? _album!.coverUrl,
+          album: t.album ?? _album!.name,
+          albumId: t.albumId ?? _album!.id,
+        ))
+        .toList();
+    final notif = ref.read(playerProvider.notifier);
+    if (thisContextShuffled) {
+      unawaited(notif.toggleShuffle());
+    } else {
+      unawaited(notif.playTrack(
+        enriched.first,
+        enriched,
+        isNewQueue: true,
+        origin: 'context',
+        contextRef: {..._contextRef, 'order': 'shuffled'},
+      ));
+    }
   }
 
   @override
@@ -182,6 +191,15 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     final tracks = _album!.tracks ?? [];
 
     final isMobile = MediaQuery.of(context).size.width < 700;
+
+    // Shuffle control state: highlight + toggle-off when THIS album is the
+    // active server context and it is currently shuffled.
+    final playerActiveShuffle = ref.watch(playerProvider.select(
+      (s) =>
+          '${s.contextRef?['type']?.toString()};${s.contextRef?['id']?.toString()};${s.isShuffled}',
+    ));
+    final bool thisContextShuffled =
+        playerActiveShuffle == 'album;${widget.browseId};true';
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
@@ -303,9 +321,19 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                                   foregroundColor: ZephyrColors.primary,
                                   padding: const EdgeInsets.all(10),
                                 ),
-                                icon: const Icon(Icons.shuffle_rounded, size: 20),
-                                onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
-                                tooltip: 'Shuffle Play',
+                                icon: Icon(
+                                  Icons.shuffle_rounded,
+                                  size: 20,
+                                  color: thisContextShuffled
+                                      ? ZephyrColors.primary
+                                      : ZephyrColors.textDim,
+                                ),
+                                onPressed: tracks.isEmpty
+                                    ? null
+                                    : () => _toggleShufflePlay(tracks, thisContextShuffled),
+                                tooltip: thisContextShuffled
+                                    ? 'Turn off shuffle'
+                                    : 'Shuffle play',
                               ),
                               if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_')) ...[
                                 const SizedBox(width: 12),
@@ -422,9 +450,19 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                                          foregroundColor: ZephyrColors.primary,
                                          padding: const EdgeInsets.all(10),
                                        ),
-                                       icon: const Icon(Icons.shuffle_rounded, size: 20),
-                                       onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
-                                       tooltip: 'Shuffle Play',
+                                       icon: Icon(
+                                         Icons.shuffle_rounded,
+                                         size: 20,
+                                         color: thisContextShuffled
+                                             ? ZephyrColors.primary
+                                             : ZephyrColors.textDim,
+                                       ),
+                                       onPressed: tracks.isEmpty
+                                           ? null
+                                           : () => _toggleShufflePlay(tracks, thisContextShuffled),
+                                       tooltip: thisContextShuffled
+                                           ? 'Turn off shuffle'
+                                           : 'Shuffle play',
                                      ),
                                      if (widget.browseId.startsWith('dz_') || widget.browseId.startsWith('MPREb_') || widget.browseId.startsWith('OLAK5uy_')) ...[
                                        const SizedBox(width: 12),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -83,16 +84,23 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     );
   }
 
-  void _shufflePlayAllTracks() {
-    if (_playlist == null || _playlist!.tracks == null || _playlist!.tracks!.isEmpty) return;
-    final tracks = _playlist!.tracks!;
-    ref.read(playerProvider.notifier).playTrack(
-      tracks.first,
-      tracks,
-      isNewQueue: true,
-      origin: 'context',
-      contextRef: {..._contextRef, 'order': 'shuffled'},
-    );
+  // Shuffle on a playlist is a TOGGLE: if this context is already playing
+  // shuffled, pressing turns shuffle OFF (server-owned context order flips);
+  // otherwise it starts/plans the playlist in shuffled order.
+  void _toggleShufflePlay(List<Track> tracks, bool thisContextShuffled) {
+    if (_playlist == null || tracks.isEmpty) return;
+    final notif = ref.read(playerProvider.notifier);
+    if (thisContextShuffled) {
+      unawaited(notif.toggleShuffle());
+    } else {
+      unawaited(notif.playTrack(
+        tracks.first,
+        tracks,
+        isNewQueue: true,
+        origin: 'context',
+        contextRef: {..._contextRef, 'order': 'shuffled'},
+      ));
+    }
   }
 
   bool _isDownloadingPlaylist = false;
@@ -310,6 +318,15 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
     final bool allTracksDownloaded = tracks.isNotEmpty &&
         tracks.every((t) => offlineState.isDownloaded(t.videoId));
 
+    // Shuffle control state: highlight + toggle-off when THIS playlist is the
+    // active server context and it is currently shuffled.
+    final playerActiveShuffle = ref.watch(playerProvider.select(
+      (s) =>
+          '${s.contextRef?['type']?.toString()};${s.contextRef?['id']?.toString()};${s.isShuffled}',
+    ));
+    final bool thisContextShuffled =
+        playerActiveShuffle == 'playlist;${_playlist!.id.toString()};true';
+
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
       body: CustomScrollView(
@@ -411,9 +428,19 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                   foregroundColor: ZephyrColors.primary,
                                   padding: const EdgeInsets.all(10),
                                 ),
-                                icon: const Icon(Icons.shuffle_rounded, size: 20),
-                                onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
-                                tooltip: 'Shuffle Play',
+                                icon: Icon(
+                                  Icons.shuffle_rounded,
+                                  size: 20,
+                                  color: thisContextShuffled
+                                      ? ZephyrColors.primary
+                                      : ZephyrColors.textDim,
+                                ),
+                                onPressed: tracks.isEmpty
+                                    ? null
+                                    : () => _toggleShufflePlay(tracks, thisContextShuffled),
+                                tooltip: thisContextShuffled
+                                    ? 'Turn off shuffle'
+                                    : 'Shuffle play',
                               ),
                               if (!isRemote) ...[
                                 if (!isPlaylistOwner) ...[
@@ -579,9 +606,19 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                                         foregroundColor: ZephyrColors.primary,
                                         padding: const EdgeInsets.all(10),
                                       ),
-                                      icon: const Icon(Icons.shuffle_rounded, size: 20),
-                                      onPressed: tracks.isEmpty ? null : _shufflePlayAllTracks,
-                                      tooltip: 'Shuffle Play',
+                                      icon: Icon(
+                                        Icons.shuffle_rounded,
+                                        size: 20,
+                                        color: thisContextShuffled
+                                            ? ZephyrColors.primary
+                                            : ZephyrColors.textDim,
+                                      ),
+                                      onPressed: tracks.isEmpty
+                                          ? null
+                                          : () => _toggleShufflePlay(tracks, thisContextShuffled),
+                                      tooltip: thisContextShuffled
+                                          ? 'Turn off shuffle'
+                                          : 'Shuffle play',
                                     ),
                                     if (!isRemote) ...[
                                       if (!isPlaylistOwner) ...[

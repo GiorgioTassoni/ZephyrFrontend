@@ -957,6 +957,20 @@ class ProviderUnavailableException implements Exception {
   String toString() => message;
 }
 
+/// Raised when a per-item user-queue mutation (remove/reorder) fails with
+/// HTTP 409 USER_QUEUE_STALE: the track_id at the target position no longer
+/// matches the server's live queue (another device changed it). The caller
+/// should re-fetch state to resync and surface the conflict.
+class UserStaleQueueException implements Exception {
+  final String message;
+  UserStaleQueueException([
+    this.message = 'The queue changed while updating it. Please try again.',
+  ]);
+
+  @override
+  String toString() => message;
+}
+
 class RateLimitException implements Exception {
   final String message;
   RateLimitException([

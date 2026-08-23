@@ -24,8 +24,22 @@ class QueueScreen extends ConsumerWidget {
         ? <Track>[]
         : playerState.queue.sublist((playerState.currentIndex + 1).clamp(0, playerState.queue.length));
 
-    // Show only the next 50 tracks coming next visually (keeps all tracks in code)
+    // Show only tracks the next 50 tracks coming next visually (keeps all tracks in code)
     final visibleBaseQueue = baseQueueRemaining.take(maxVisibleNormalQueue).toList();
+
+    // Exchange 60: with a server-resolved context, the backend reports the
+    // real remaining count. queue_count = len(active_order) - cursor is the
+    // authoritative "next in queue" number; context_total matches it in
+    // steady state and serves as the denominator when both exist.
+    final bool hasServerContext =
+        playerState.contextRef != null &&
+        (playerState.queueCount != null ||
+            playerState.contextTotal != null);
+    final int? serverRemaining =
+        playerState.queueCount ?? playerState.contextTotal;
+    final int remainingCount = hasServerContext
+        ? serverRemaining!
+        : baseQueueRemaining.length;
 
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
@@ -103,21 +117,28 @@ class QueueScreen extends ConsumerWidget {
                 ],
 
                 // 3. Next In Queue (Base Queue) Section
-                if (baseQueueRemaining.isNotEmpty) ...[
+                // Render when EITHER the server reports real remaining tracks
+                // (queue_count/context_total, may be non-zero while the local
+                // window is briefly empty after a context switch) OR the local
+                // window has visible items.
+                if (baseQueueRemaining.isNotEmpty ||
+                    (hasServerContext && remainingCount > 0)) ...[
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Next in queue (${baseQueueRemaining.length})',
+                        // F5: never show a count lower than the tiles rendered
+                        // below it (the local window can lag the server count).
+                        'Next in queue (${remainingCount < visibleBaseQueue.length ? visibleBaseQueue.length : remainingCount})',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                           color: ZephyrColors.textDim,
                         ),
                       ),
-                      if (baseQueueRemaining.length > visibleBaseQueue.length)
+                      if (remainingCount > visibleBaseQueue.length)
                         Text(
-                          'Showing next ${visibleBaseQueue.length} of ${baseQueueRemaining.length}',
+                          'Showing next ${visibleBaseQueue.length} of ${remainingCount}',
                           style: const TextStyle(
                             fontSize: 12,
                             color: ZephyrColors.textDim,
@@ -133,7 +154,7 @@ class QueueScreen extends ConsumerWidget {
                     onReorder: playerNotifier.reorderBaseQueue,
                     onDelete: playerNotifier.removeFromBaseQueue,
                   ),
-                  if (baseQueueRemaining.length > visibleBaseQueue.length) ...[
+                  if (remainingCount > visibleBaseQueue.length) ...[
                     const SizedBox(height: 16),
                     Center(
                       child: Container(
@@ -146,7 +167,7 @@ class QueueScreen extends ConsumerWidget {
                           ),
                         ),
                         child: Text(
-                          '+ ${baseQueueRemaining.length - visibleBaseQueue.length} more tracks in queue',
+                          '+ ${remainingCount - visibleBaseQueue.length} more tracks in queue',
                           style: const TextStyle(
                             color: ZephyrColors.textDim,
                             fontSize: 12,

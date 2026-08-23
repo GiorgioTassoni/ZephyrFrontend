@@ -1051,6 +1051,45 @@ class ZephyrApi {
     }
   }
 
+  /// Remove one specific instance from the user queue (per-item endpoint).
+  /// `position` is the item's index in the live user_queue array (0 = next);
+  /// `trackId` cross-checks duplicate instances. Errors: 404 out-of-range,
+  /// 409 USER_QUEUE_STALE (track no longer at that position).
+  Future<void> removeUserQueueItem(
+    String trackId,
+    int position,
+  ) async {
+    try {
+      await _dio.delete(
+        '/api/player/user-queue/item',
+        data: {'track_id': trackId, 'position': position},
+      );
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  /// Reorder one specific instance in the user queue. Both indexes reference
+  /// the live user_queue array. Same errors as removeUserQueueItem.
+  Future<void> reorderUserQueueItem(
+    String trackId,
+    int position,
+    int toPosition,
+  ) async {
+    try {
+      await _dio.post(
+        '/api/player/user-queue/reorder',
+        data: {
+          'track_id': trackId,
+          'position': position,
+          'to_position': toPosition,
+        },
+      );
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
   // --- Albums & Artists ---
 
   Future<Album> getAlbumDetail(String browseId, {bool refresh = false}) async {
@@ -2022,6 +2061,13 @@ class ZephyrApi {
       final data = error.response?.data;
       if (data is Map) {
         final code = data['code']?.toString();
+        if (code == 'USER_QUEUE_STALE' &&
+            error.response?.statusCode == 409) {
+          return UserStaleQueueException(
+            data['message']?.toString() ??
+                'The queue changed while updating it. Please try again.',
+          );
+        }
         if (error.response?.statusCode == 409 ||
             code == 'MATCH_SELECTION_REQUIRED') {
           return ResolutionRequiredException.fromJson(

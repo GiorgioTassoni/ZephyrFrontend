@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/library_provider.dart';
 import '../providers/player_provider.dart';
+import '../providers/queue_policy.dart';
 import '../api/zephyr_api.dart';
 import '../theme/colors.dart';
 import '../providers/auth_provider.dart';
 import '../providers/navigation_provider.dart';
 import '../providers/offline_provider.dart';
+import '../utils/app_logger.dart';
 import 'track_metadata_editor_dialog.dart';
 import 'share_dialog.dart';
 import 'cover_image.dart';
@@ -430,14 +432,46 @@ class _TrackTileState extends ConsumerState<TrackTile> {
 
     final activeContext = playerState.contextRef;
     final requestedContext = widget.contextRef;
-    final bool isSameContext = widget.origin != 'search' &&
-        ((activeContext != null && requestedContext != null &&
-                activeContext['type']?.toString() ==
-                    requestedContext['type']?.toString() &&
-                activeContext['id']?.toString() ==
-                    requestedContext['id']?.toString()) ||
-            (playerState.queue.isNotEmpty &&
-                playerState.queue.any((t) => t.videoId == widget.track.videoId)));
+    // The context comparison is authoritative when the tile declares a
+    // context (playlist/album/favorites). A tap in a DIFFERENT context must
+    // always start a new queue even if the track also appears in the current
+    // queue (overlapping playlists previously left the old queue installed).
+    final bool hasRequestedContext = requestedContext != null;
+    final bool contextMatches =
+        QueuePolicy.contextMatches(activeContext, requestedContext);
+    // Only context-less sources (artist top-songs, library, ad-hoc lists)
+    // fall back to the legacy "track already in the queue" heuristic.
+    final bool hasTrackInQueue =
+        playerState.queue.isNotEmpty &&
+        playerState.queue.any((t) => t.videoId == widget.track.videoId);
+    final bool isSameContext = QueuePolicy.isSameContext(
+      origin: widget.origin,
+      hasRequestedContext: hasRequestedContext,
+      contextMatches: contextMatches,
+      hasTrackInQueue: hasTrackInQueue,
+    );
+
+    // Diagnostic: the tap's context decision. Users share AppLogger logs to
+    // debug "queue did not switch when jumping playlists" (Android vs desktop).
+    AppLogger.instance.logQueue(
+      'tap_context_decision',
+      data: {
+        'trackId': widget.track.videoId,
+        'title': widget.track.title,
+        'origin': widget.origin ?? 'context',
+        'hasRequestedContext': hasRequestedContext,
+        'requestedType': requestedContext?['type'],
+        'requestedId': requestedContext?['id'],
+        'requestedOrder': requestedContext?['order'],
+        'activeType': activeContext?['type'],
+        'activeId': activeContext?['id'],
+        'contextMatches': contextMatches,
+        'membershipFallback':
+            hasTrackInQueue && !hasRequestedContext,
+        'isSameContext': isSameContext,
+        'localQueueLength': playerState.queue.length,
+      },
+    );
 
     try {
       await playerNotifier.playTrack(

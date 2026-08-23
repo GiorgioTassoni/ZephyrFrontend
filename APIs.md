@@ -176,6 +176,18 @@ Get the current playback state + queue for the user's session.
   "radio_request_id": "a1b2c3...",  // unique id of the current radio generation
   "radio_generation": 3,             // monotonic counter, bumps on every seed
   "radio_error": {},                 // {code, message} when radio_status == "failed"
+  "context_ref": {                   // null when no server-resolved context is active
+    "type": "playlist",             // "playlist" | "album" | "favorites"
+    "id": "pl_42",                  // omitted for favorites
+    "order": "as_listed",           // "as_listed" | "shuffled"
+    "offset": 0
+  },
+  "context_order_active": "linear", // "linear" | "shuffled" | null (the toggled order the cursor walks)
+  "context_cursor": 0,               // position in the active order (0 = first remaining)
+  "context_total": 500,              // full remaining context size (all unplayed tracks)
+  "context_status": "ready",        // "idle" | "pending" | "ready" | "failed"
+  "context_request_id": null,        // stale-result guard for async resolution
+  "context_error": {},               // {code, message} when context_status == "failed"
   "_sse_initial": false
 }
 ```
@@ -202,6 +214,12 @@ Apply a heartbeat / track change. Partial — only provided fields overwrite.
   "is_playing": true,                  // optional: play/pause
   "queue_mode": "radio",              // optional: "radio" | "context"
   "queue": [...],                      // optional: frontend-owned queue (context mode)
+  "context_ref": {                     // optional (Exchange 60): server-resolved context
+    "type": "playlist",              //   "playlist" | "album" | "favorites"
+    "id": "pl_42",                   //   omitted for favorites (implicit per-user)
+    "order": "as_listed",            //   "as_listed" | "shuffled"
+    "offset": 17                      //   optional: start index into the resolved list
+  },
   "origin": "queue",                  // optional: "queue" | "context"
   "seed_radio": true                   // optional: start a fresh radio queue
 }
@@ -216,6 +234,8 @@ Apply a heartbeat / track change. Partial — only provided fields overwrite.
 - `"context"` — play it now and remove just it from the queue.
 - absent — legacy head-drain rules (queue respected, nothing regenerates).
 
+> **When a server-resolved `context_ref` is active**, both `"queue"` and `"context"` clicks are treated as click-to-play within the context — the **active order** decides the exact semantics (`linear` → skip-to, `shuffled` → play-now-remove-one). See the `context_ref` section below; the plain-queue rules above only apply to ad-hoc `queue: [...]` contexts.
+
 **`seed_radio` semantics (the ONLY fresh-radio trigger) — async (Exchange 59):**
 - `true` + `current_track_id` — atomically discard the normal queue, consume the track from the user queue if present, reset history, stamp `radio_status: "pending"` with a fresh `radio_request_id` + bumped `radio_generation`, spawn a background generation job, and **return immediately** (the request no longer blocks on Deezer discovery). Implies `queue_mode: "radio"` (flips the session even from a context queue).
 - `false` / absent — the queue is fully respected: advance, skip and head-pops never regenerate it.
@@ -228,11 +248,22 @@ Apply a heartbeat / track change. Partial — only provided fields overwrite.
 
 **`queue_mode` + `queue`:** Load a frontend-owned context queue (playlist/favorites/album). In `context` mode the backend never injects discovery tracks. Ignored when `seed_radio: true` (the seed wins). Loading a queue also supersedes any in-flight radio generation.
 
+**`context_ref` — server-resolved context queue (Exchange 60):** Instead of uploading a full `queue: [...]` array for a known collection, send a lightweight reference and the server resolves / shuffles / walks the list for you.
+- **Mutually exclusive with `queue`** — sending both returns `422`.
+- **Resolution:** the server resolves the track IDs once (local playlists / albums / favorites are a single indexed query; Deezer `dz_` playlists are paginated), builds **both** a `linear` and a `shuffled` order, and stores them in the session row. `order` picks which one is active; `offset` (optional) starts the cursor there.
+- **Derived `queue`:** the response's `queue` is the *display window* — `active_order[cursor : cursor+50]`, hydrated back into full track dicts — while `queue_count` is the **real remaining** count (`context_total = active_order.length`). Both orders always only contain *unplayed* tracks: advancing dual-pops the played track off both, so toggling linear↔shuffled never replays anything.
+- **Skip (`POST /api/player/next`)**: cursor walk over the active order (O(1)) — no discovery, no re-resolution. `previous` re-inserts the skipped track. No `404` until the context is genuinely exhausted.
+- **Click-to-play (a specific track):** send `current_track_id` + `origin` (`"context"` for playlist-page clicks, `"queue"` for queue-view clicks) and the server applies the **active-order rule** — never leaving the cursor stale:
+  - **`linear` active → skip-to**: all remaining tracks from the cursor up to *and including* the clicked one are dropped from **both** orders and the cursor resets to 0, so `next` continues with the track **after** the clicked one. *(Click #32 while on #3 → plays #32, then #33 → #34 → ….)*
+  - **`shuffled` active → play-now-remove-one**: only the clicked track is removed (pulled out of **both** orders so it is never replayed); the rest of the shuffled **unplayed** set keeps playing in order — no arbitrary prefix is dropped in a randomized list.
+- **Toggle / re-shuffle:** `POST /api/player/context/toggle` flips linear↔shuffled (cursor resets to 0); `POST /api/player/context/reshuffle` regenerates the shuffled order from what remains. See below.
+- **`seed_radio: true`** replaces any active context wholesale (radio wins).
+
 **Response:** Full player state (same shape as `GET /api/player/state`).
 
 **Errors:**
 - `409` — `PLAYER_ACTIVE` (another device owns the session)
-- `422` — `seed_radio` without `current_track_id`
+- `422` — `seed_radio` without `current_track_id`, or `context_ref` together with `queue`
 
 ---
 
@@ -340,19 +371,19 @@ Explicitly become the player ("Play here"). Returns `409` while a live owner dif
 
 ### `POST /api/player/next`
 
-Advance to the next queued track. User queue drains before radio/context queue. Returns `404` when the queue is empty.
+Advance to the next queued track. User queue drains before radio/context queue. When a server-resolved `context_ref` is active, advances the context cursor instead (dual-pop on both orders — no discovery). Returns `404` when the queue is empty.
 
 **Response:** Full player state.
 
 **Errors:**
-- `202` — Radio generation still `pending` and both queues empty: body is the full state with `radio_status: "pending"` — the queue is not ready yet, keep playing the current track and wait for the SSE `ready` event (do not treat it as a stop signal)
+- `202` — Radio generation still `pending` and both queues empty: body is the full state with `radio_status: "pending"` — the queue is not ready yet, keep playing the current track and wait for the SSE `ready` event (do not treat it as a stop signal). Also returned (with `context_status: "pending"`) while an async context is still resolving and the user queue is empty.
 - `404` — Queue genuinely empty (incl. `radio_status: "failed"`)
 
 ---
 
 ### `POST /api/player/previous`
 
-Step back one track. Restores the previous track at position 0. Re-inserts the skipped track at the head of the queue it came from.
+Step back one track. Restores the previous track at position 0. Re-inserts the skipped track at the head of the queue it came from (or the context cursor when a `context_ref` is active).
 
 **Response:** Full player state.
 
@@ -363,7 +394,7 @@ Step back one track. Restores the previous track at position 0. Re-inserts the s
 
 ### `POST /api/player/user-queue`
 
-Add a track to the user queue (Spotify-style "add to queue"). Plays before the radio/context queue.
+Add a track to the user queue (Spotify-style "add to queue"). Plays before the radio/context queue. **Duplicates are allowed** — the same track may be queued multiple times; each add appends a new instance.
 
 **Request Body:**
 ```json
@@ -389,6 +420,69 @@ Add a track to the user queue (Spotify-style "add to queue"). Plays before the r
 Empty the user queue. Also wiped automatically after ~30 min without heartbeats.
 
 **Response:** Full player state.
+
+---
+
+### `DELETE /api/player/user-queue/item`
+
+Remove ONE item from the user queue (Spotify-style single removal). Because duplicates are allowed, the item is addressed by its **live position** (index into the current `user_queue` array in the state snapshot, `0` = next to play), cross-checked against the client's `track_id`.
+
+**Request Body:**
+```json
+{
+  "track_id": "dz_123",
+  "position": 2
+}
+```
+
+**Errors:**
+- `404` — `position` out of range (queue shrank under the client).
+- `409 USER_QUEUE_STALE` — the `track_id` at `position` no longer matches (queue changed under the client, e.g. another device added). Re-fetch `GET /api/player/state` and retry.
+
+**Response:** Full player state.
+
+---
+
+### `POST /api/player/user-queue/reorder`
+
+Move ONE user-queue item to a new position (Spotify-style reorder). Same addressing as the single removal: current `position` + `track_id` cross-check, plus the destination `to_position` (index in the current `user_queue` array).
+
+**Request Body:**
+```json
+{
+  "track_id": "dz_123",
+  "position": 2,
+  "to_position": 0
+}
+```
+
+**Errors:**
+- `404` — `position` or `to_position` out of range.
+- `409 USER_QUEUE_STALE` — the `track_id` at `position` no longer matches.
+
+**Response:** Full player state.
+
+---
+
+### `POST /api/player/context/toggle`
+
+Flip the active order of the current server-resolved context between `linear` and `shuffled`. The played/unplayed state is preserved (both orders are always dual-popped in sync), and the cursor resets to `0`. No request body.
+
+**Response:** Full player state, with `context_order_active` flipped.
+
+**Errors:**
+- `404` — No active context to toggle
+
+---
+
+### `POST /api/player/context/reshuffle`
+
+Regenerate the shuffled order from the current linear order, keeping only unplayed tracks, and reset the cursor to `0`. No request body.
+
+**Response:** Full player state with the fresh `queue` window.
+
+**Errors:**
+- `404` — No active context to reshuffle
 
 ---
 
@@ -1602,11 +1696,14 @@ Some errors include structured codes:
 | Mode | Who owns the queue | Discovery | Use case |
 |---|---|---|---|
 | `radio` | Server (auto-refilled) | Runs (Deezer graph) | Single-track play, search, discovery |
-| `context` | Frontend (pushed via PUT) | Never | Playlists, favorites, albums |
+| `context` | Frontend (pushed via PUT `queue: [...]`) | Never | Ad-hoc / local files / search-origin tracks |
+| `context` + `context_ref` | Server (resolved once) | Never | Playlists, albums, favorites |
+
+**With `context_ref`, the server resolves the full ordered list once** and walks a cursor — so >50 track playlists are handled without frontend batching. The wire `queue` is a 50-track display window, but `queue_count`/`context_total` reflect the real remaining size and `next` keeps working to the end.
 
 **Queue drain order:** User queue → Radio/Context queue.
 
-**Max stored queue:** 50 tracks. For larger playlists, hold the full list in memory and re-push when drained.
+**Max stored queue:** 50 tracks (the display window).
 
 ---
 

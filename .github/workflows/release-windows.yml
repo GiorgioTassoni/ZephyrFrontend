@@ -59,6 +59,14 @@ jobs:
         working-directory: packages/zephyr_core
         run: flutter pub get
 
+      - name: Static analysis (zephyr_core) - errors/warnings only
+        working-directory: packages/zephyr_core
+        # This Flutter version treats info-level lints as fatal by default
+        # (--fatal-infos is ON). The repo has pre-existing style infos that
+        # must not block a release, so analysis fails only on real
+        # errors/warnings.
+        run: flutter analyze --no-fatal-infos
+
       - name: Install dependencies (desktop app)
         working-directory: apps/zephyr_desktop
         run: flutter pub get

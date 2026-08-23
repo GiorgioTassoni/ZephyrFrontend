@@ -35,9 +35,10 @@ jobs:
 
       - name: Static analysis
         working-directory: packages/zephyr_core
-        # Fail on analyzer errors/warnings (the repo is already clean at 0/0;
-        # info-level style lints are non-blocking).
-        run: flutter analyze
+        # This Flutter version treats info-level lints as fatal by default
+        # (--fatal-infos on); the repo has pre-existing style infos that must
+        # not block the gate. Only real errors/warnings fail here.
+        run: flutter analyze --no-fatal-infos
 
       - name: Run tests
         working-directory: packages/zephyr_core

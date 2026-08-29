@@ -589,6 +589,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
     final isPlaying = ref.watch(playerProvider.select((s) => s.isPlaying));
     final isLoading = ref.watch(playerProvider.select((s) => s.isLoading));
     final isShuffled = ref.watch(playerProvider.select((s) => s.isShuffled));
+    // Radio queues are server-shuffled by design; the shuffle control is
+    // disabled there (toggling it locally breaks /next window installs).
+    final isRadioMode = ref.watch(
+      playerProvider.select((s) => s.queueMode == 'radio'),
+    );
     final repeatMode = ref.watch(playerProvider.select((s) => s.repeatMode));
     final isPlayerDevice = ref.watch(playerProvider.select((s) => s.isPlayerDevice));
     final activeDeviceName = ref.watch(playerProvider.select((s) => s.activeDeviceName));
@@ -930,10 +935,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                         IconButton(
                           icon: Icon(
                             Icons.shuffle_rounded,
-                            color: isShuffled ? ZephyrColors.primary : ZephyrColors.textDim,
+                            color: isRadioMode
+                                ? ZephyrColors.textMuted.withValues(alpha: 0.4)
+                                : isShuffled
+                                ? ZephyrColors.primary
+                                : ZephyrColors.textDim,
                             size: 26,
                           ),
-                          onPressed: () => playerNotifier.toggleShuffle(),
+                          onPressed: isRadioMode
+                              ? null
+                              : () => playerNotifier.toggleShuffle(),
+                          tooltip: isRadioMode
+                              ? 'Radio is already shuffled'
+                              : 'Shuffle',
                         ),
                         IconButton(
                           icon: const Icon(Icons.skip_previous_rounded, color: ZephyrColors.text, size: 38),
@@ -1449,10 +1463,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> with SingleTickerPr
                       IconButton(
                         icon: Icon(
                           Icons.shuffle,
-                          color: isShuffled ? ZephyrColors.primary : ZephyrColors.textDim,
+                          color: isRadioMode
+                              ? ZephyrColors.textMuted.withValues(alpha: 0.4)
+                              : isShuffled
+                              ? ZephyrColors.primary
+                              : ZephyrColors.textDim,
                           size: 22,
                         ),
-                        onPressed: () => playerNotifier.toggleShuffle(),
+                        onPressed: isRadioMode
+                            ? null
+                            : () => playerNotifier.toggleShuffle(),
+                        tooltip: isRadioMode
+                            ? 'Radio is already shuffled'
+                            : 'Shuffle',
                       ),
                       const SizedBox(width: 12),
                       IconButton(

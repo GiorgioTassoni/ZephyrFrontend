@@ -1,6 +1,6 @@
 # Zephyr Music Client — Linux Installation Guide
 
-Applies to **Zephyr Music Client v1.1.1 Preview** (desktop shell in `apps/zephyr_desktop`).
+Applies to **Zephyr Music Client v1.1.2 Preview** (desktop shell in `apps/zephyr_desktop`).
 
 The installer is [`installSelect.sh`](installSelect.sh) — an interactive script that:
 
@@ -35,7 +35,7 @@ dist/
 └── bundle/
     ├── frontend
     ├── data/…
-    └── VERSION          # optional: "1.1.1" (line 1) + "Preview" (line 2)
+    └── VERSION          # optional: "1.1.2" (line 1) + "Preview" (line 2)
 ```
 
 Then run:

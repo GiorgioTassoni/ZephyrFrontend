@@ -41,6 +41,26 @@ class QueueScreen extends ConsumerWidget {
         ? serverRemaining!
         : baseQueueRemaining.length;
 
+    // Drift watchdog: when this screen looks wrongly-empty while the session
+    // says tracks should be coming (radio ready / non-zero server counts),
+    // request ONE authoritative state re-apply from the backend. Throttled
+    // and additive-only inside the provider — heals a lost-SSE or latched-
+    // guard session where skips kept working but the window was never
+    // delivered locally.
+    final bool looksWronglyEmpty =
+        baseQueueRemaining.isEmpty &&
+        currentTrack != null &&
+        ((playerState.radioStatus == 'ready') ||
+            (playerState.queueCount ?? 0) > 0 ||
+            (playerState.contextTotal ?? 0) > 0);
+    if (looksWronglyEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        playerNotifier.resyncServerState(
+          reason: 'queue_screen_empty_window',
+        );
+      });
+    }
+
     return Scaffold(
       backgroundColor: ZephyrColors.bgDark,
       body: Column(

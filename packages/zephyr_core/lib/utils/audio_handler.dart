@@ -143,6 +143,23 @@ class ZephyrAudioHandler extends BaseAudioHandler with SeekHandler {
     );
   }
 
+  /// Patch ONLY the duration of the active MediaItem. Android Auto head
+  /// units read the duration from the MediaSession metadata to render the
+  /// progress bar; freshly seeded radio/search tracks start with a null
+  /// duration and the real length only becomes known once the engine loads
+  /// the source. Id-guarded and change-guarded so repeated calls are no-ops
+  /// and never re-trigger the cover-resolution pipeline.
+  void updateMediaItemDuration(Duration duration) {
+    try {
+      final current = mediaItem.value;
+      if (current == null) return;
+      if (current.duration == duration) return;
+      mediaItem.add(current.copyWith(duration: duration));
+    } catch (e) {
+      debugPrint('ZephyrAudioHandler mediaItem duration notice: $e');
+    }
+  }
+
   /// Update metadata broadcasted to Android MediaSession & iOS MPNowPlayingInfoCenter
   void setTrackMediaItem(Track track, String apiBaseUrl) {
     Uri? finalArtUri;

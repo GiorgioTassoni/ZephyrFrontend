@@ -663,7 +663,6 @@ class ZephyrApi {
     bool? isPlaying,
     String? queueMode,
     List<Map<String, dynamic>>? queue,
-    List<Map<String, dynamic>>? userQueue,
     String? origin,
     bool? seedRadio,
     Map<String, dynamic>? contextRef,
@@ -678,7 +677,6 @@ class ZephyrApi {
       if (queueMode != null) body['queue_mode'] = queueMode;
       if (queue != null) body['queue'] = queue;
       if (contextRef != null) body['context_ref'] = contextRef;
-      if (userQueue != null) body['user_queue'] = userQueue;
       if (origin != null && (origin == 'queue' || origin == 'context')) {
         body['origin'] = origin;
       }
@@ -689,11 +687,12 @@ class ZephyrApi {
     } on DioException catch (e) {
       if (e.response?.statusCode == 409 && e.response?.data is Map) {
         final data = e.response!.data as Map;
-        if (data['code'] == 'PLAYER_ACTIVE') {
+        if (_errorCodeMatches(data, 'PLAYER_ACTIVE')) {
           throw PlayerActiveException(
-            ownerDeviceId: data['device_id']?.toString() ?? '',
+            ownerDeviceId: _errorField(data, 'device_id')?.toString() ?? '',
             ownerDeviceName:
-                data['device_name']?.toString() ?? 'Another Device',
+                _errorField(data, 'device_name')?.toString() ??
+                'Another Device',
           );
         }
       }
@@ -701,13 +700,17 @@ class ZephyrApi {
     }
   }
 
+  /// Remote-control intent (POST /api/player/command). `seedRadio` maps to
+  /// the documented optional `seed_radio` field for `play_track` — required
+  /// so remotely-initiated search plays trigger a fresh radio queue
+  /// (`seed_radio` is the ONLY fresh-radio trigger per APIs.md).
   Future<Map<String, dynamic>?> sendPlayerCommand({
     required String action,
     String? currentTrackId,
     int? positionMs,
     String? origin,
-    bool? seedRadio,
     Map<String, dynamic>? contextRef,
+    bool? seedRadio,
   }) async {
     try {
       final body = <String, dynamic>{'action': action};
@@ -717,7 +720,10 @@ class ZephyrApi {
         body['origin'] = origin;
       }
       if (contextRef != null) body['context_ref'] = contextRef;
-      if (seedRadio != null) body['seed_radio'] = seedRadio;
+      // seed_radio is only meaningful for play_track per the contract.
+      if (seedRadio != null && action == 'play_track') {
+        body['seed_radio'] = seedRadio;
+      }
 
       final response = await _dio.post('/api/player/command', data: body);
       if (response.data is Map) {
@@ -750,10 +756,14 @@ class ZephyrApi {
     } on DioException catch (e) {
       if (e.response?.statusCode == 409 && e.response?.data is Map) {
         final data = e.response!.data as Map;
-        throw PlayerActiveException(
-          ownerDeviceId: data['device_id']?.toString() ?? '',
-          ownerDeviceName: data['device_name']?.toString() ?? 'Another Device',
-        );
+        if (_errorCodeMatches(data, 'PLAYER_ACTIVE')) {
+          throw PlayerActiveException(
+            ownerDeviceId: _errorField(data, 'device_id')?.toString() ?? '',
+            ownerDeviceName:
+                _errorField(data, 'device_name')?.toString() ??
+                'Another Device',
+          );
+        }
       }
       throw _handleDioError(e);
     }
@@ -762,8 +772,21 @@ class ZephyrApi {
   Future<List<Map<String, dynamic>>> getConnectedDevices() async {
     try {
       final response = await _dio.get('/api/player/devices');
-      if (response.data is Map && response.data['devices'] is List) {
-        return List<Map<String, dynamic>>.from(response.data['devices']);
+      // APIs.md documents a bare array; older builds wrapped it as
+      // {devices: [...]}. Accept both shapes so the picker never silently
+      // empties out if the backend trims the wrapper.
+      final dynamic body = response.data;
+      List<dynamic>? rawList;
+      if (body is List) {
+        rawList = body;
+      } else if (body is Map && body['devices'] is List) {
+        rawList = body['devices'] as List;
+      }
+      if (rawList != null) {
+        return rawList
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
       }
       return [];
     } on DioException catch (e) {
@@ -1430,7 +1453,7 @@ class ZephyrApi {
     }
   }
 
-  Future<void> savePlaylist(int playlistId) async {
+  Future<void> savePlaylist(dynamic playlistId) async {
     try {
       await _dio.post('/api/playlists/$playlistId/save');
     } on DioException catch (e) {
@@ -1438,7 +1461,7 @@ class ZephyrApi {
     }
   }
 
-  Future<void> unsavePlaylist(int playlistId) async {
+  Future<void> unsavePlaylist(dynamic playlistId) async {
     try {
       await _dio.delete('/api/playlists/$playlistId/save');
     } on DioException catch (e) {
@@ -1492,7 +1515,11 @@ class ZephyrApi {
     }
   }
 
-  Future<void> addTrackToPlaylist(int playlistId, String trackId) async {
+  // Playlist ids are Strings throughout the model layer ('21', 'dz_90819').
+  // These endpoints accept dynamic and interpolate directly — a hard `int`
+  // parameter threw "Type String is not a subtype of int" whenever a caller
+  // passed a model id through (the remove-track-from-playlist bug).
+  Future<void> addTrackToPlaylist(dynamic playlistId, String trackId) async {
     try {
       await _dio.post(
         '/api/playlists/$playlistId/tracks',
@@ -1503,7 +1530,10 @@ class ZephyrApi {
     }
   }
 
-  Future<void> removeTrackFromPlaylist(int playlistId, String trackId) async {
+  Future<void> removeTrackFromPlaylist(
+    dynamic playlistId,
+    String trackId,
+  ) async {
     try {
       await _dio.delete(
         '/api/playlists/$playlistId/tracks',
@@ -1515,7 +1545,7 @@ class ZephyrApi {
   }
 
   Future<void> reorderPlaylistTracks(
-    int playlistId,
+    dynamic playlistId,
     List<String> newOrder,
   ) async {
     try {
@@ -1635,7 +1665,9 @@ class ZephyrApi {
       return ImportStatus(
         jobId: response.data['job_id'] ?? '',
         status: response.data['status'] ?? 'processing',
-        total: response.data['total'] ?? 0,
+        // POST /api/import/csv is documented with `total_rows` (APIs.md §8);
+        // older builds returned `total`. Accept both.
+        total: response.data['total'] ?? response.data['total_rows'] ?? 0,
         processed: 0,
         queued: 0,
         failed: 0,
@@ -2056,47 +2088,78 @@ class ZephyrApi {
 
   // --- Error Handling ---
 
+  /// True when [data] carries an error `code` either at the top level of the
+  /// body (`{code, message}`) or nested under `detail`
+  /// (`{detail: {code, ...}}`) — both shapes exist across backend builds.
+  static bool _errorCodeMatches(dynamic data, String code) {
+    if (data is! Map) return false;
+    if (data['code']?.toString() == code) return true;
+    final detail = data['detail'];
+    return detail is Map && detail['code']?.toString() == code;
+  }
+
+  /// First non-null value for [key], checking the body root then a nested
+  /// `detail` object.
+  static dynamic _errorField(dynamic data, String key) {
+    if (data is Map && data[key] != null) return data[key];
+    if (data is Map && data['detail'] is Map) {
+      final detail = data['detail'] as Map;
+      if (detail[key] != null) return detail[key];
+    }
+    return null;
+  }
+
   Object _handleDioError(DioException error) {
     if (error.response != null) {
       final data = error.response?.data;
       if (data is Map) {
-        final code = data['code']?.toString();
+        // Structured codes may arrive at the top level or under `detail`
+        // (APIs.md "Error Response Format"). Flatten both into one lookup
+        // view — same normalization the stream proxy applies.
+        final flat = <String, dynamic>{};
+        void absorb(Map src) => src.forEach((k, v) {
+              if (v != null) flat[k.toString()] = v;
+            });
+        absorb(data);
+        final detail = data['detail'];
+        if (detail is Map) absorb(detail);
+
+        final code = flat['code']?.toString();
+        final message = flat['message']?.toString();
         if (code == 'USER_QUEUE_STALE' &&
             error.response?.statusCode == 409) {
           return UserStaleQueueException(
-            data['message']?.toString() ??
-                'The queue changed while updating it. Please try again.',
+            message ?? 'The queue changed while updating it. Please try again.',
           );
         }
         if (error.response?.statusCode == 409 ||
             code == 'MATCH_SELECTION_REQUIRED') {
-          return ResolutionRequiredException.fromJson(
-            Map<String, dynamic>.from(data),
-          );
+          return ResolutionRequiredException.fromJson(flat);
         }
         if (code == 'TRACK_UNAVAILABLE' ||
             (error.response?.statusCode == 404 && code != null)) {
           return TrackUnavailableException(
-            data['message']?.toString() ??
-                'No safe YouTube Music match was found.',
+            message ?? 'No safe YouTube Music match was found.',
           );
         }
         if (code == 'PROVIDER_UNAVAILABLE' ||
             error.response?.statusCode == 503) {
           return ProviderUnavailableException(
-            data['message']?.toString() ??
-                'Music provider is temporarily down.',
+            message ?? 'Music provider is temporarily down.',
           );
         }
-        if (data.containsKey('missing_ids')) {
-          final missing = (data['missing_ids'] as List).join(', ');
+        if (flat.containsKey('missing_ids')) {
+          final missing = (flat['missing_ids'] as List).join(', ');
           return 'Artist not found: Unknown artist ID(s): $missing';
+        }
+        if (detail != null && detail is! Map) {
+          return detail.toString();
         }
         if (data.containsKey('detail')) {
           return data['detail'].toString();
         }
         if (data.containsKey('message')) {
-          return data['message'].toString();
+          return message ?? '';
         }
       }
       return 'Error: ${error.response?.statusCode} - ${error.response?.statusMessage}';

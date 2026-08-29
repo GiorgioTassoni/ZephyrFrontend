@@ -23,6 +23,34 @@ class QueuePolicy {
         rawRequestId != previousRequestId;
   }
 
+  /// Timestamp-ordered variant of [isStaleContextResolution].
+  ///
+  /// The id-only check above is direction-blind: it cannot tell a LATE
+  /// snapshot of the OLD resolution (genuinely stale — the case F1 guards)
+  /// apart from a snapshot of a NEWER resolution the client has not adopted
+  /// yet (e.g. the PUT response was lost while its SSE broadcast arrived —
+  /// routine on mobile where the SSE socket dies in background). Rejecting
+  /// the newer snapshot latches the stale state forever: the preserved
+  /// tracked id never matches again, so every subsequent snapshot of the
+  /// new context is rejected too and the previous playlist's queue sticks
+  /// while the new song plays.
+  ///
+  /// Ordering rule: a differing id is only stale when the snapshot is
+  /// strictly OLDER than the moment the currently tracked id was observed.
+  /// Newer-or-equal timestamps mean adoption. When either timestamp is
+  /// unknown we keep the conservative id-only behaviour.
+  static bool isStaleContextResolutionGuarded({
+    required String? rawRequestId,
+    required String? previousRequestId,
+    required DateTime? snapshotUpdatedAt,
+    required DateTime? trackedUpdatedAt,
+  }) {
+    if (rawRequestId == null || previousRequestId == null) return false;
+    if (rawRequestId == previousRequestId) return false;
+    if (snapshotUpdatedAt == null || trackedUpdatedAt == null) return true;
+    return snapshotUpdatedAt.isBefore(trackedUpdatedAt);
+  }
+
   /// Whether a track-tile tap is inside the SAME context as the currently
   /// active one, or must start a brand-new queue.
   ///

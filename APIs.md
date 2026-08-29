@@ -197,6 +197,8 @@ Get the current playback state + queue for the user's session.
 - `_sse_initial: true` marks the snapshot sent on SSE connect/reconnect.
 - Queue modes: `radio` (server-managed, auto-refilled) or `context` (frontend-managed, no discovery).
 - **Radio generation is async (Exchange 59).** `radio_status` tells the client what the queue means: `pending` → generation in flight, `queue` is empty by design (keep playing the current track, the ready event arrives via SSE); `ready` → queue is the generated radio; `failed` → generation died (`radio_error` has the `{code, message}`), the queue is permanently empty until the user re-seeds. `radio_request_id` / `radio_generation` let a reconnecting client correlate the state with the in-flight/committed job. A `pending` row whose job was lost (server restart) is lazily failed with `code: "radio_job_lost"` on the next read.
+- **Radio never re-suggests played tracks.** Both the async seed job and the refill-when-low path exclude the session's **history** (tracks already played this session) from discovery results, in addition to the current queue, the user queue and the seed itself — a radio queue never loops what the user just heard.
+- **Refill commits are TOCTOU-guarded.** A radio refill captures the `radio_request_id` when it starts and only commits its discovery batch if the session is **still** in `radio` mode, **not** `pending`, and still on that same request id. If the user fired a newer seed or switched to a `context_ref` queue while discovery was in flight, the stale batch is discarded (logged `playback refill discarded (session superseded)`) — a slow discovery can never overwrite a newer seed or a context queue.
 
 ---
 
@@ -244,7 +246,7 @@ Apply a heartbeat / track change. Partial — only provided fields overwrite.
 
 **Immediate response:** `200 OK` with the full player state, `queue: []`, `queue_count: 0`, `radio_status: "pending"`, `radio_request_id` (a unique id), `radio_generation`, `updated_at`. Start playback of `current_track_id` right away — the queue is only needed for what plays next.
 
-**Background job:** runs discovery with bounded retries (3 attempts, short backoff, 60s hard deadline), dedupes, excludes the seed track, caps at 15. It commits the queue **only if `radio_request_id` is still current** — a newer seed, a context queue load, or a queue-view/playlist skip replaces the id, so a slow old job's result is discarded (`radio_seed_job_discarded_stale`). On success it broadcasts a normal SSE `state` event with `radio_status: "ready"`, the seeded `queue` and the same `radio_request_id`. On permanent failure (provider down after retries, `empty_discovery`, `seed_without_deezer_identity`) it broadcasts `radio_status: "failed"` + `radio_error: {code, message}` and persists the failed state for reconnecting clients.
+**Background job:** runs discovery with bounded retries (3 attempts, short backoff, 60s hard deadline), dedupes, excludes the seed track **and any track already in the session history** (read at commit time, so tracks played while the job ran are also excluded), caps at 15. It commits the queue **only if `radio_request_id` is still current** — a newer seed, a context queue load, or a queue-view/playlist skip replaces the id, so a slow old job's result is discarded (`radio_seed_job_discarded_stale`). On success it broadcasts a normal SSE `state` event with `radio_status: "ready"`, the seeded `queue` and the same `radio_request_id`. On permanent failure (provider down after retries, `empty_discovery`, `seed_without_deezer_identity`) it broadcasts `radio_status: "failed"` + `radio_error: {code, message}` and persists the failed state for reconnecting clients.
 
 **`queue_mode` + `queue`:** Load a frontend-owned context queue (playlist/favorites/album). In `context` mode the backend never injects discovery tracks. Ignored when `seed_radio: true` (the seed wins). Loading a queue also supersedes any in-flight radio generation.
 
@@ -270,6 +272,8 @@ Apply a heartbeat / track change. Partial — only provided fields overwrite.
 ### `GET /api/player/queue`
 
 Get the radio queue (refilled server-side when low) plus the higher-priority user queue.
+
+**Refill behavior:** when the radio queue drops below the threshold, the backend appends a fresh discovery batch on the next read/skip. The batch never repeats tracks already in the queue, the user queue, the seed, or the session history, and the commit is guarded (see notes above) so a stale in-flight discovery can never clobber a newer seed or a context queue.
 
 **Response `200 OK`:**
 ```json
@@ -299,7 +303,7 @@ List every device with a live SSE connection, plus the session owner — the "co
 
 ### `GET /api/player/events`
 
-Server-Sent Events stream for live multi-device sync. Auth via cookie fallback (EventSource cannot send Authorization headers).
+Server-Sent Events stream for live multi-device sync. Auth via `Authorization: Bearer` header; the client also sends the `access_token` cookie manually as a fallback (the cookie itself is scoped to `/api/tracks` for the stream/cover endpoints that can't send headers).
 
 **Query Params:**
 | Param | Type | Description |
@@ -330,12 +334,18 @@ Remote-control intent from any device. Never changes ownership — the owner's d
   "current_track_id": "dz_123",   // required for play_track
   "position_ms": 42000,           // required for seek
   "origin": "queue",              // optional: "queue" | "context"
+  "context_ref": {                // optional (play_track): server-resolved context,
+    "type": "playlist",           //   same schema as PUT /api/player/state.
+    "id": "pl_42",                //   Ignored/replaced when seed_radio is true
+    "order": "as_listed",         //   ("radio wins").
+    "offset": 17
+  },
   "seed_radio": true               // optional (play_track): fresh radio queue
 }
 ```
 
 **`action` semantics:**
-- `play_track` — play a track (ownership unchanged); `origin` / `seed_radio` apply
+- `play_track` — play a track (ownership unchanged); `origin` / `context_ref` / `seed_radio` apply
 - `pause` / `toggle` / `seek` — control the owner's playback
 - `next` — advance to the next track (same as `POST /api/player/next`)
 - `previous` — step back one track (same as `POST /api/player/previous`)
@@ -383,7 +393,7 @@ Advance to the next queued track. User queue drains before radio/context queue. 
 
 ### `POST /api/player/previous`
 
-Step back one track. Restores the previous track at position 0. Re-inserts the skipped track at the head of the queue it came from (or the context cursor when a `context_ref` is active).
+Step back one track. Restores the previous track at position 0. Re-inserts the skipped track at the head of the queue it came from (or the context cursor when a `context_ref` is active) — **except a track consumed from the user queue, which is one-shot**: `previous` steps back through history but never puts it back on the queue (Spotify-style).
 
 **Response:** Full player state.
 
@@ -1705,6 +1715,8 @@ Some errors include structured codes:
 
 **Max stored queue:** 50 tracks (the display window).
 
+**Radio auto-refill:** when `radio` mode's queue runs low, the backend refills it from the Deezer graph on the next read/skip — excluding tracks already in the queue, the user queue, the seed, and the session's played history. The refill commit is guarded by the `radio_request_id` it captured at start (radio-only, not `pending`, same request id), so an in-flight discovery can never overwrite a newer seed or a playlist `context_ref` switch; a rejected stale batch is logged as `playback refill discarded (session superseded)` and the `refilled` flag stays `false`.
+
 ---
 
 ## SSE Event Types
@@ -1714,5 +1726,7 @@ Some errors include structured codes:
 | `state` | Full player state snapshot (on connect + every mutation) |
 | `library` | Library change notification (`favorites` / `playlists` / `history` + `added` / `removed` / `updated` / `created` / `deleted`) |
 | `track_status` | Track download status change |
+| `devices` | Device-list snapshot (array of `{device_id, device_name, is_player, is_alive}`) broadcast when devices connect/disconnect or ownership changes. Supplements, but does not replace, `GET /api/player/devices`. |
+| `import_progress` | CSV-import job progress snapshot (`job_id`, `status`, row counters like `total`/`total_rows`, `processed`/`completed`, `queued`, `failed`, `needs_review`/`review`, `unavailable`) while an import job runs. |
 | `sse_closed` | Connection kicked (per-user limit exceeded) |
 | `: ping` | Keep-alive every ~20s |

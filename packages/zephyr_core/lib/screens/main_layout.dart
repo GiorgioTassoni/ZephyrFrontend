@@ -1258,12 +1258,19 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                     IconButton(
                       icon: Icon(
                         Icons.shuffle,
-                        color: state.isShuffled
+                        color: state.queueMode == 'radio'
+                            ? ZephyrColors.textMuted.withValues(alpha: 0.4)
+                            : state.isShuffled
                             ? ZephyrColors.primary
                             : ZephyrColors.textDim,
                         size: 20,
                       ),
-                      onPressed: () => notifier.toggleShuffle(),
+                      onPressed: state.queueMode == 'radio'
+                          ? null
+                          : () => notifier.toggleShuffle(),
+                      tooltip: state.queueMode == 'radio'
+                          ? 'Radio is already shuffled'
+                          : 'Shuffle',
                     ),
                     IconButton(
                       icon: const Icon(

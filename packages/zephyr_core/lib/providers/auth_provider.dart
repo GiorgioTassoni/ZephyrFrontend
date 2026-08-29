@@ -138,29 +138,27 @@ class AuthNotifier extends Notifier<AuthState> {
         }
       }
 
-      // Validate with a lightweight call; the interceptor auto-refreshes if needed
-      try {
-        await _api.getFavorites();
+      // Optimistic session restore: the token is present and either still
+      // valid or was freshly refreshed above. Skip the dedicated validation
+      // round trip (it duplicated the first library request and delayed every
+      // startup by one full RTT) and let the first real API call validate
+      // server-side — a dead session hits the interceptor's 401 path, fails
+      // to refresh, and lands in forceLogout().
+      _api.onUnauthorized = () {
+        forceLogout('New session detected, disconnected');
+      };
 
-        // Bind callback on successful session validation
-        _api.onUnauthorized = () {
-          forceLogout('New session detected, disconnected');
-        };
+      final effectiveToken = _api.token ?? token;
+      _scheduleProactiveRefresh(effectiveToken);
 
-        final effectiveToken = _api.token ?? token;
-        _scheduleProactiveRefresh(effectiveToken);
-
-        state = AuthState(
-          token: effectiveToken,
-          username: username,
-          role: role,
-          isApproved: isApproved,
-          isLoading: false,
-        );
-        return;
-      } catch (e) {
-        // Token + refresh both invalid — fall through to unauthenticated
-      }
+      state = AuthState(
+        token: effectiveToken,
+        username: username,
+        role: role,
+        isApproved: isApproved,
+        isLoading: false,
+      );
+      return;
     }
 
     state = AuthState(isLoading: false);

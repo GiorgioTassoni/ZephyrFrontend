@@ -26,6 +26,107 @@ void main() {
     });
   });
 
+  group('QueuePolicy.isStaleContextResolutionGuarded', () {
+    final trackedAt = DateTime.utc(2026, 8, 27, 12, 0, 0);
+    final newer = trackedAt.add(const Duration(seconds: 2));
+    final older = trackedAt.subtract(const Duration(seconds: 2));
+
+    test('is false when either id is null', () {
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: null,
+          previousRequestId: 'A',
+          snapshotUpdatedAt: newer,
+          trackedUpdatedAt: trackedAt,
+        ),
+        isFalse,
+      );
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: 'B',
+          previousRequestId: null,
+          snapshotUpdatedAt: newer,
+          trackedUpdatedAt: trackedAt,
+        ),
+        isFalse,
+      );
+    });
+
+    test('is false when ids match', () {
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: 'A',
+          previousRequestId: 'A',
+          snapshotUpdatedAt: older,
+          trackedUpdatedAt: trackedAt,
+        ),
+        isFalse,
+      );
+    });
+
+    test('is true for a differing id when timestamps are unknown (legacy)', () {
+      // Without ordering information we keep the conservative id-only rule.
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: 'B',
+          previousRequestId: 'A',
+          snapshotUpdatedAt: null,
+          trackedUpdatedAt: trackedAt,
+        ),
+        isTrue,
+      );
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: 'B',
+          previousRequestId: 'A',
+          snapshotUpdatedAt: newer,
+          trackedUpdatedAt: null,
+        ),
+        isTrue,
+      );
+    });
+
+    test(
+        'is FALSE for a differing id whose snapshot is newer than the '
+        'tracked one (adoption — the mobile latched-stale bug)', () {
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: 'B',
+          previousRequestId: 'A',
+          snapshotUpdatedAt: newer,
+          trackedUpdatedAt: trackedAt,
+        ),
+        isFalse,
+      );
+    });
+
+    test('is FALSE for a differing id with an equal timestamp', () {
+      // Equal timestamps mean the same server commit echoed back; adopting
+      // is harmless and prevents a stuck guard.
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: 'B',
+          previousRequestId: 'A',
+          snapshotUpdatedAt: trackedAt,
+          trackedUpdatedAt: trackedAt,
+        ),
+        isFalse,
+      );
+    });
+
+    test('is TRUE for a late snapshot of the older resolution (F1 intact)', () {
+      expect(
+        QueuePolicy.isStaleContextResolutionGuarded(
+          rawRequestId: 'A',
+          previousRequestId: 'B',
+          snapshotUpdatedAt: older,
+          trackedUpdatedAt: trackedAt,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('QueuePolicy.contextMatches', () {
     test('matches on equal type + id', () {
       final a = {'type': 'playlist', 'id': 'pl-1', 'order': 'as_listed'};

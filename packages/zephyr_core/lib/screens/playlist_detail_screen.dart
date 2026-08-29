@@ -54,9 +54,18 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
     try {
       final details = await _api.getPlaylistDetail(widget.playlistId);
+      // Defensive: a degenerate response (e.g. a body carrying only
+      // `updated_at`) parses to id '0' / no tracks and must never blank an
+      // already-loaded screen — keep the current playlist instead.
+      final idStr = details.id?.toString() ?? '';
+      final looksValid = idStr.isNotEmpty && idStr != '0';
       setState(() {
-        _playlist = details;
-        _isLoading = false;
+        if (!looksValid && _playlist != null) {
+          _isLoading = false;
+        } else {
+          _playlist = details;
+          _isLoading = false;
+        }
       });
     } catch (e) {
       setState(() {
@@ -264,7 +273,13 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
   Future<void> _removeTrack(String trackId) async {
     if (_playlist == null) return;
     try {
-      await _api.removeTrackFromPlaylist(_playlist!.id, trackId);
+      // Route through the library notifier: it normalizes the playlist id
+      // (model ids are Strings; the old direct API call passed one into an
+      // `int` parameter → "Type String is not a subtype of int") and keeps
+      // the shared library state in sync after the mutation.
+      await ref
+          .read(libraryProvider.notifier)
+          .removeTrackFromPlaylist(_playlist!.id, trackId);
       await _fetchPlaylistDetails();
       if (mounted) ZephyrToast.show(context, 'Song removed from playlist');
     } catch (e) {

@@ -589,7 +589,14 @@ class _TrackTileState extends ConsumerState<TrackTile> {
           ZephyrToast.show(context, 'Selection saved! Re-streaming correct track...');
           ref.read(libraryProvider.notifier).loadLibrary();
           if (isCurrentActiveTrack) {
-            playerNotifier.playTrack(widget.track, playerState.queue.isNotEmpty ? playerState.queue : [widget.track]);
+          // Replay the freshly-resolved track as an in-context click: per
+          // backend contract, re-sending the active context_ref is NOT
+          // idempotent (it would reload orders and clear history).
+          playerNotifier.playTrack(
+            widget.track,
+            playerState.queue.isNotEmpty ? playerState.queue : [widget.track],
+            origin: 'context',
+          );
           }
         }
       }
@@ -608,7 +615,11 @@ class _TrackTileState extends ConsumerState<TrackTile> {
           ref.read(libraryProvider.notifier).loadLibrary();
           final player = ref.read(playerProvider);
           if (player.currentTrack?.videoId == widget.track.videoId) {
-            ref.read(playerProvider.notifier).playTrack(widget.track, player.queue.isNotEmpty ? player.queue : [widget.track]);
+            ref.read(playerProvider.notifier).playTrack(
+            widget.track,
+            player.queue.isNotEmpty ? player.queue : [widget.track],
+            origin: 'context',
+          );
           }
         }
       }

@@ -758,6 +758,29 @@ class Playlist {
       tracks: tracksList,
     );
   }
+
+  /// Serializes for the local library cache (see [LibraryCache] in
+  /// library_provider.dart). Keys mirror [Playlist.fromJson] so a
+  /// persist→hydrate round trip is lossless for the fields the cache needs.
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'user_id': userId,
+      'title': name,
+      'description': description,
+      'owner_name': ownerName,
+      'is_owner': isOwner,
+      'is_saved': isSaved,
+      'cover_path': coverPath,
+      'cover_url': coverUrl,
+      'is_public': isPublic,
+      'track_count': trackCount,
+      'downloaded_count': downloadedCount,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+      'tracks': tracks?.map((t) => t.toJson()).toList(),
+    };
+  }
 }
 
 class HistoryEntry {
@@ -815,6 +838,19 @@ class HistoryEntry {
       listenedAt: parsedDate,
       track: trackVal,
     );
+  }
+
+  /// Serializes for the local library cache (see [LibraryCache] in
+  /// library_provider.dart); the embedded track, when present, round trips
+  /// through [HistoryEntry.fromJson]'s `track` branch.
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'user_id': userId,
+      'track_id': trackId,
+      'listened_at': listenedAt.toIso8601String(),
+      'track': track?.toJson(),
+    };
   }
 }
 
@@ -1068,11 +1104,13 @@ class ImportStatus {
     return ImportStatus(
       jobId: json['job_id'] ?? '',
       status: json['status'] ?? 'processing',
-      total: json['total'] ?? 0,
-      processed: json['processed'] ?? 0,
+      // APIs.md documents total_rows/completed/review; older payloads used
+      // total/processed/needs_review. Accept both vocabularies.
+      total: json['total'] ?? json['total_rows'] ?? 0,
+      processed: json['processed'] ?? json['completed'] ?? 0,
       queued: json['queued'] ?? 0,
       failed: json['failed'] ?? 0,
-      needsReview: json['needs_review'] ?? 0,
+      needsReview: json['needs_review'] ?? json['review'] ?? 0,
       unavailable: json['unavailable'] ?? 0,
       failedTracks: fails,
       reviewItems: reviews,

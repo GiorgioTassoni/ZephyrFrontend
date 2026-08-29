@@ -50,12 +50,18 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
       if (jobId.isEmpty) return;
 
       final status = data['status']?.toString() ?? 'processing';
-      final total = (data['total'] as num?)?.toInt() ?? 0;
-      final processed = (data['processed'] as num?)?.toInt() ?? 0;
-      final queued = (data['queued'] as num?)?.toInt() ?? 0;
-      final failed = (data['failed'] as num?)?.toInt() ?? 0;
-      final needsReview = (data['needs_review'] as num?)?.toInt() ?? 0;
-      final unavailable = (data['unavailable'] as num?)?.toInt() ?? 0;
+      // Field vocabulary differs across API generations (APIs.md documents
+      // total_rows/completed/review; older payloads use total/processed/
+      // needs_review). Accept both spellings everywhere.
+      dynamic field(String key, [String? alias]) =>
+          data[key] ?? (alias != null ? data[alias] : null);
+      final total = (field('total', 'total_rows') as num?)?.toInt() ?? 0;
+      final processed = (field('processed', 'completed') as num?)?.toInt() ?? 0;
+      final queued = (field('queued') as num?)?.toInt() ?? 0;
+      final failed = (field('failed') as num?)?.toInt() ?? 0;
+      final needsReview =
+          (field('needs_review', 'review') as num?)?.toInt() ?? 0;
+      final unavailable = (field('unavailable') as num?)?.toInt() ?? 0;
 
       // Update in-memory history list
       setState(() {

@@ -78,7 +78,7 @@ class LibraryNotifier extends Notifier<LibraryState> {
     if (!isAuthenticated) {
       return LibraryState();
     }
-    Future.microtask(() => loadLibrary());
+    Future.microtask(() => _startupLoad());
     return LibraryState(isLoading: true);
   }
 
@@ -88,10 +88,27 @@ class LibraryNotifier extends Notifier<LibraryState> {
     }
     unawaited(flushOfflineHistory());
     try {
-      List<Track> serverTracks = [];
-      try {
-        serverTracks = await _api.getDownloadedTracks();
-      } catch (_) {}
+      // The four requests are independent — run them concurrently instead of
+      // sequentially. Startup latency becomes the slowest single round trip
+      // instead of the sum of all four. Each degrades independently on
+      // failure (null → keep previous state / empty), preserving the old
+      // per-request error tolerance.
+      final serverTracksF = _guard(_api.getDownloadedTracks());
+      final playlistsF = _guard(_api.getPlaylists());
+      final favoritesF = _guard(_api.getFavoritesWithCount());
+      final historyF = _guard(_api.getHistory());
+
+      final serverTracks = await serverTracksF ?? const <Track>[];
+      final playlists = await playlistsF ?? state.playlists;
+      final favsResult = await favoritesF;
+      final history = await historyF ?? state.history;
+
+      List<Track> favorites = state.favorites;
+      int? totalFavs = state.totalFavoritesCount;
+      if (favsResult != null) {
+        favorites = List.from(favsResult.tracks);
+        totalFavs = favsResult.totalCount;
+      }
 
       final offlineTracks = OfflineStorageService().getAllOfflineTracks();
       final Map<String, Track> mergedTracks = {
@@ -99,24 +116,6 @@ class LibraryNotifier extends Notifier<LibraryState> {
         for (final t in offlineTracks) t.videoId: t,
       };
       final tracks = mergedTracks.values.toList();
-
-      List<Playlist> playlists = state.playlists;
-      try {
-        playlists = await _api.getPlaylists();
-      } catch (_) {}
-
-      List<Track> favorites = state.favorites;
-      int? totalFavs = state.totalFavoritesCount;
-      try {
-        final favsResult = await _api.getFavoritesWithCount();
-        favorites = List.from(favsResult.tracks);
-        totalFavs = favsResult.totalCount;
-      } catch (_) {}
-
-      List<HistoryEntry> history = state.history;
-      try {
-        history = await _api.getHistory();
-      } catch (_) {}
 
       // Enrich history entries with track metadata
       final List<HistoryEntry> enrichedHistoryList = [];
@@ -167,6 +166,17 @@ class LibraryNotifier extends Notifier<LibraryState> {
         isLoading: false,
       );
 
+      // Persist the freshly loaded library so the next app start can render
+      // instantly from cache (stale-while-revalidate) instead of blocking on
+      // the network.
+      unawaited(_persistLibraryCache(
+        tracks: tracks,
+        playlists: playlists,
+        favorites: favorites,
+        totalFavoritesCount: totalFavs,
+        history: enrichedHistoryList,
+      ));
+
       if (!quiet) {
         // If player has no track loaded, load the last listened track from history paused
         final playerNotifier = ref.read(playerProvider.notifier);
@@ -199,6 +209,114 @@ class LibraryNotifier extends Notifier<LibraryState> {
 
   Future<void> refreshLibrary() async {
     await loadLibrary();
+  }
+
+  /// Awaits [future], converting any failure into null so one failed request
+  /// cannot take down the whole (parallel) library load.
+  Future<T?> _guard<T>(Future<T> future) async {
+    try {
+      return await future;
+    } catch (e) {
+      debugPrint('Library partial load failure: $e');
+      return null;
+    }
+  }
+
+  /// Startup path: render instantly from the last persisted library when one
+  /// exists, then refresh from the network (stale-while-revalidate).
+  Future<void> _startupLoad() async {
+    await _hydrateFromCache();
+    await loadLibrary();
+  }
+
+  /// Restores the previous session's library from the local cache so the UI
+  /// has content before the first network response arrives. Returns true
+  /// when a non-empty cache was applied.
+  Future<bool> _hydrateFromCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = LibraryCache.decode(prefs.getString(LibraryCache.prefKey));
+      if (data == null) return false;
+
+      final tracks = ((data['tracks'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Track.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      final playlists = ((data['playlists'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Playlist.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      final favorites = ((data['favorites'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Track.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      final history = ((data['history'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => HistoryEntry.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      final totalFavs =
+          data['total_favorites'] is int ? data['total_favorites'] as int : null;
+
+      if (tracks.isEmpty &&
+          playlists.isEmpty &&
+          favorites.isEmpty &&
+          history.isEmpty) {
+        return false;
+      }
+
+      final bool hasMoreFavs = totalFavs != null &&
+          favorites.length < totalFavs &&
+          favorites.length >= LibraryState._pageSize;
+
+      state = LibraryState(
+        downloadedTracks: tracks,
+        playlists: playlists,
+        favorites: favorites,
+        totalFavoritesCount: totalFavs,
+        favoritesOffset: favorites.length,
+        hasMoreFavorites: hasMoreFavs,
+        history: history,
+        isLoading: false,
+      );
+      AppLogger.instance.logSystem('library_cache_hydrated', data: {
+        'tracks': tracks.length,
+        'playlists': playlists.length,
+        'favorites': favorites.length,
+        'history': history.length,
+      });
+      return true;
+    } catch (e) {
+      debugPrint('Library cache hydration failed: $e');
+      return false;
+    }
+  }
+
+  Future<void> _persistLibraryCache({
+    required List<Track> tracks,
+    required List<Playlist> playlists,
+    required List<Track> favorites,
+    required int? totalFavoritesCount,
+    required List<HistoryEntry> history,
+  }) async {
+    try {
+      final encoded = jsonEncode(LibraryCache.encode(
+        tracks: tracks,
+        playlists: playlists,
+        favorites: favorites,
+        totalFavoritesCount: totalFavoritesCount,
+        history: history,
+      ));
+      // Safety valve: an absurdly large library would make the
+      // SharedPreferences write slower than the cache saves.
+      if (encoded.length > LibraryCache.maxEncodedBytes) {
+        AppLogger.instance.logSystem('library_cache_skipped_too_large');
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(LibraryCache.prefKey, encoded);
+    } catch (e) {
+      debugPrint('Library cache persist failed: $e');
+    }
   }
 
   // --- Favorites ---
@@ -673,6 +791,54 @@ class LibraryNotifier extends Notifier<LibraryState> {
       playlists: updatedPlaylists,
       downloadedTracks: updatedDownloaded,
     );
+  }
+}
+
+/// Local persistence for the last successfully loaded library.
+///
+/// Enables stale-while-revalidate startup: the UI renders the previous
+/// session's tracks/playlists/favorites/history immediately while a network
+/// refresh runs. Payloads are versioned; undecodable or foreign-version
+/// payloads decode to null and the app falls back to a cold load.
+class LibraryCache {
+  static const int version = 1;
+  static const String prefKey = 'zephyr_library_cache_v1';
+  static const int maxHistoryEntries = 60;
+
+  /// Refuse to persist payloads beyond ~5 MB — a SharedPreferences write of
+  /// that size would stall startup more than the cache saves.
+  static const int maxEncodedBytes = 5 * 1024 * 1024;
+
+  static Map<String, dynamic> encode({
+    required List<Track> tracks,
+    required List<Playlist> playlists,
+    required List<Track> favorites,
+    required int? totalFavoritesCount,
+    required List<HistoryEntry> history,
+  }) {
+    return {
+      'v': version,
+      'saved_at': DateTime.now().toUtc().toIso8601String(),
+      'tracks': tracks.map((t) => t.toJson()).toList(),
+      'playlists': playlists.map((p) => p.toJson()).toList(),
+      'favorites': favorites.map((t) => t.toJson()).toList(),
+      'total_favorites': totalFavoritesCount,
+      'history':
+          history.take(maxHistoryEntries).map((h) => h.toJson()).toList(),
+    };
+  }
+
+  /// Returns null for missing, malformed or foreign-version payloads.
+  static Map<String, dynamic>? decode(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final Object? data = jsonDecode(raw);
+      if (data is! Map<String, dynamic>) return null;
+      if (data['v'] != version) return null;
+      return data;
+    } catch (_) {
+      return null;
+    }
   }
 }
 
